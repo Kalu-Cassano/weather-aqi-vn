@@ -1,0 +1,20 @@
+# Data and trained models are large and are re-created by the scripts
+data/
+models/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local secrets (never commit)
+.streamlit/secrets.toml
+.env

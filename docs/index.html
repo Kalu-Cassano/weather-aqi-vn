@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- EDIT 2 LINKS: search id="demo-link" (live demo link) and id="repo-link" (GitHub link). -->
+<title>Weather &amp; AQI VN</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Big Data Analytics project by Group 8: hourly temperature and PM2.5 forecasts for 34 provinces of Vietnam, with self-trained XGBoost models and a local AI assistant.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600&display=swap">
+<style>
+/* Layout: one dark night-sky band for the hero (the only bold moment), then calm light sections
+   with generous space, few borders, and a single teal accent. */
+:root{
+  --paper:#fbfcfd;      /* bright, faintly cool white */
+  --panel:#ffffff;
+  --ink:#15242e;
+  --ink-soft:#5d6d77;
+  --rule:#e4eaee;
+  --accent:#0d8a80;     /* bright teal */
+  --accent-soft:#e1f4f1;
+  --accent-ink:#ffffff;
+  --bar-1:#d6dee3;
+  --bar-2:#9db4be;
+  --hero-bg:#e6f3f6;    /* morning sky */
+  --hero-bg2:#ffffff;
+  --hero-ink:#13232d;
+  --hero-soft:#4f6470;
+  --hero-rule:#cde0e6;
+  --glow:#0d8a80;
+  --glow-ink:#ffffff;
+  --aqi1:#22a35a;--aqi2:#e0c12c;--aqi3:#f08a24;--aqi4:#d93b3b;--aqi5:#8a4c9a;--aqi6:#7a2236;
+  --font:"Be Vietnam Pro",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --radius:14px;
+}
+:root{color-scheme:light}  /* light-only by choice: always a bright page */
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--font);font-weight:400;font-size:1.0625rem;line-height:1.7;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1100px;margin:0 auto;padding-left:max(20px,env(safe-area-inset-left,0px));padding-right:max(20px,env(safe-area-inset-right,0px))}
+a{color:var(--accent)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+h1,h2,h3{margin:0;text-wrap:balance;font-weight:600;letter-spacing:-.02em;line-height:1.15}
+h2{font-size:clamp(1.7rem,3.2vw,2.3rem)}
+h3{font-size:1.06rem;letter-spacing:-.005em}
+p{margin:0}
+.lede{color:var(--ink-soft);max-width:60ch}
+.num{font-variant-numeric:tabular-nums}
+
+/* ---------- hero band ---------- */
+.band{background:linear-gradient(180deg,var(--hero-bg) 0%,var(--hero-bg2) 100%);color:var(--hero-ink)}
+.top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:22px;flex-wrap:wrap}
+.brand{font-weight:600;letter-spacing:-.01em;color:var(--hero-ink);text-decoration:none}
+.top nav{display:flex;gap:24px;flex-wrap:wrap;font-size:.94rem}
+.top nav a{color:var(--hero-soft);text-decoration:none}
+.top nav a:hover{color:var(--hero-ink)}
+.hero{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,.7fr);gap:48px;align-items:center;padding-block:40px 72px}
+.hero h1{font-size:clamp(2.2rem,4.8vw,3.4rem);font-weight:500;letter-spacing:-.03em;line-height:1.1}
+.hero .lede{color:var(--hero-soft);margin-top:22px;font-size:1.1rem}
+.cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:32px}
+.btn{display:inline-flex;align-items:center;padding:12px 22px;border-radius:999px;font-weight:500;text-decoration:none;font-size:.98rem;transition:transform .2s ease,box-shadow .2s ease}
+.btn:hover{transform:translateY(-1px)}
+.btn.primary{background:var(--glow);color:var(--glow-ink);box-shadow:0 6px 18px -8px var(--glow)}
+.btn.ghost{color:var(--hero-ink);border:1px solid var(--hero-rule);background:var(--hero-bg2)}
+.btn.ghost:hover{border-color:var(--hero-soft)}
+.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-top:48px;border-top:1px solid var(--hero-rule)}
+.facts span{padding:18px 16px 0 0;font-size:.88rem;color:var(--hero-soft)}
+.facts b{display:block;font-weight:500;font-size:1.6rem;color:var(--hero-ink);letter-spacing:-.02em;line-height:1.3}
+.mapbox{justify-self:center;width:100%;max-width:260px;margin:0}
+.mapbox svg{width:100%;height:auto;display:block}
+.mapcap{font-size:.82rem;color:var(--hero-soft);margin-top:10px;text-align:center}
+.prov{fill:var(--glow);transform-box:fill-box;transform-origin:center;transition:transform .2s ease;cursor:pointer}
+.prov:hover,.prov:focus-visible,.prov.on{transform:scale(1.9)}
+.tip{font-size:11px;font-weight:600;fill:var(--hero-ink);font-family:var(--font);paint-order:stroke;stroke:var(--hero-bg2);stroke-width:4px;stroke-linejoin:round;pointer-events:none}
+.ring{fill:none;stroke:var(--glow);stroke-width:1;opacity:0;transform-box:fill-box;transform-origin:center;animation:sweep 7s ease-out infinite}
+@keyframes sweep{0%{opacity:.8;transform:scale(1)}30%{opacity:0;transform:scale(3.4)}100%{opacity:0;transform:scale(3.4)}}
+.city{font-size:10px;fill:var(--hero-soft);font-family:var(--font)}
+.grat{stroke:var(--hero-rule);stroke-width:.6}
+.gratlab{font-size:8px;fill:var(--hero-soft);font-family:var(--font)}
+
+/* ---------- light sections ---------- */
+section{padding-block:88px}
+section + section{border-top:1px solid var(--rule)}
+.sec-head{display:grid;gap:14px;margin-bottom:44px;max-width:64ch}
+
+/* pipeline: a real sequence, so numbered */
+.pipe-wrap{position:relative}
+.flowdot{position:absolute;top:-4px;left:0;width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 5px var(--accent-soft);z-index:0;animation:flow 9s linear infinite}
+@keyframes flow{0%{left:0;opacity:0}5%{opacity:1}92%{opacity:1}100%{left:calc(100% - 10px);opacity:0}}
+.pipe{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:28px;counter-reset:step;list-style:none;padding:0;margin:0}
+.pipe li{min-width:0;padding-top:20px;border-top:2px solid var(--rule);position:relative}
+.pipe li::before{counter-increment:step;content:counter(step);position:absolute;top:-13px;left:0;z-index:1;width:24px;height:24px;border-radius:50%;
+  background:var(--paper);border:2px solid var(--accent);color:var(--accent);font-size:.75rem;font-weight:600;display:grid;place-items:center}
+.pipe h3{margin-bottom:8px}
+.pipe p{font-size:.92rem;color:var(--ink-soft);line-height:1.6}
+.pipe .stat{display:block;margin-top:14px;font-weight:500;font-size:1.15rem;color:var(--accent)}
+.pipe .stat small{display:block;font-weight:400;font-size:.8rem;color:var(--ink-soft)}
+
+/* results */
+.results{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:56px;align-items:start}
+.seg{display:inline-flex;background:var(--rule);border-radius:999px;padding:4px;gap:2px;margin-bottom:22px}
+.seg button{font:inherit;font-weight:500;font-size:.9rem;border:0;background:transparent;color:var(--ink-soft);padding:7px 18px;border-radius:999px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--panel);color:var(--ink);box-shadow:0 1px 2px rgba(15,30,40,.12)}
+.chart{overflow-x:auto}
+.chart svg{display:block;width:100%;min-width:420px;height:auto}
+.bar{transform-box:fill-box;transform-origin:50% 100%;animation:grow .7s cubic-bezier(.2,.8,.2,1) backwards}
+.blab{animation:fade .4s ease backwards}
+@keyframes grow{from{transform:scaleY(0)}}
+@keyframes fade{from{opacity:0}}
+.legend{display:flex;gap:20px;flex-wrap:wrap;font-size:.84rem;color:var(--ink-soft);margin-top:14px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px}
+.tbl{width:100%;border-collapse:collapse;font-size:.94rem}
+.tbl caption{text-align:left;font-weight:500;padding-bottom:10px;color:var(--ink)}
+.tbl th,.tbl td{text-align:right;padding:12px 6px;border-bottom:1px solid var(--rule)}
+.tbl th:first-child,.tbl td:first-child{text-align:left}
+.tbl th{font-weight:400;color:var(--ink-soft);font-size:.84rem}
+.tbl td.win{color:var(--accent);font-weight:600}
+.note{font-size:.88rem;color:var(--ink-soft);margin-top:18px;line-height:1.6}
+
+/* assistant */
+.chat{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:56px;align-items:start}
+.bul{margin:22px 0 0;padding:0;list-style:none;display:grid;gap:14px}
+.bul li{padding-left:18px;position:relative;color:var(--ink-soft);font-size:.96rem}
+.bul li::before{content:"";position:absolute;left:0;top:.7em;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.bul b{color:var(--ink);font-weight:500}
+.aqi{display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:28px;max-width:340px}
+.aqi span{flex:1}
+.aqilab{display:flex;justify-content:space-between;max-width:340px;font-size:.74rem;color:var(--ink-soft);margin-top:6px}
+.bubbles{background:var(--panel);border-radius:var(--radius);padding:24px;display:grid;gap:14px;box-shadow:0 1px 2px rgba(15,30,40,.05),0 8px 28px rgba(15,30,40,.06)}
+.b{padding:12px 16px;border-radius:16px;max-width:88%;font-size:.95rem;line-height:1.55}
+.b.u{justify-self:end;background:var(--accent);color:var(--accent-ink);border-bottom-right-radius:4px}
+.b.a{justify-self:start;background:var(--paper);border-bottom-left-radius:4px}
+.tag{font-size:.78rem;color:var(--ink-soft)}
+.bubbles.play .b{animation:pop .45s cubic-bezier(.2,.8,.2,1) backwards;animation-delay:var(--d,0s)}
+@keyframes pop{from{opacity:0;transform:translateY(8px) scale(.98)}}
+
+/* limits */
+.limits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:36px 56px;list-style:none;padding:0;margin:0}
+.limits li{min-width:0}
+.limits h3{margin-bottom:8px}
+.limits p{color:var(--ink-soft);font-size:.95rem;line-height:1.65}
+
+/* team */
+.team{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;max-width:680px}
+.member{display:flex;align-items:center;gap:16px}
+.member .av{flex:none;width:52px;height:52px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:600;font-size:1.05rem}
+.member p{color:var(--ink-soft);font-size:.92rem}
+
+footer{border-top:1px solid var(--rule);padding-block:32px 48px;font-size:.86rem;color:var(--ink-soft);display:grid;gap:6px}
+
+@media (max-width:900px){
+  .hero,.results,.chat{grid-template-columns:minmax(0,1fr);gap:40px}
+  .mapbox{max-width:200px}
+  .facts{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:8px}
+  .pipe{grid-template-columns:minmax(0,1fr);gap:36px}
+  .flowdot{display:none}
+  .limits,.team{grid-template-columns:minmax(0,1fr)}
+  section{padding-block:64px}
+}
+@media (prefers-reduced-motion:reduce){.ring,.flowdot,.bar,.blab,.bubbles.play .b{animation:none}.flowdot{display:none}.btn,.prov{transition:none}}
+</style>
+</head>
+<body>
+
+
+<div class="band">
+  <div class="wrap">
+    <header class="top">
+      <a class="brand" href="#top">Weather &amp; AQI VN</a>
+      <nav aria-label="Sections">
+        <a href="#pipeline">Pipeline</a>
+        <a href="#results">Results</a>
+        <a href="#assistant">AI assistant</a>
+        <a href="#limitations">Limitations</a>
+        <a href="#team">Team</a>
+      </nav>
+    </header>
+    <div class="hero" id="top">
+      <div>
+        <h1>Temperature and PM2.5 forecasts for all 34 provinces of Vietnam, updated every hour</h1>
+        <p class="lede">The system collects new data every hour and processes almost 2.8 million rows of history with PySpark. Our own XGBoost models forecast the next 1, 3 and 6 hours, and an AI assistant answers questions using the same data.</p>
+        <div class="cta">
+          <a class="btn primary" id="demo-link" href="#" target="_blank" rel="noopener">Open live demo</a>
+          <a class="btn ghost" id="repo-link" href="#" target="_blank" rel="noopener">View source code</a>
+        </div>
+        <div class="facts num">
+          <span><b data-to="34" data-dec="0">34</b>provinces</span>
+          <span><b data-to="2.77" data-dec="2" data-suf="M">2.77M</b>rows of data</span>
+          <span><b data-to="204" data-dec="0">204</b>forecasts per hour</span>
+          <span><b data-to="0.37" data-dec="2" data-suf=" °C">0.37 °C</b>1-hour forecast error</span>
+        </div>
+      </div>
+      <figure class="mapbox">
+        <svg id="vnmap" viewBox="0 0 300 600" role="img" aria-label="34 data points placed at the real latitude and longitude of each province, from Lai Châu in the north to Cà Mau in the south"></svg>
+        <figcaption class="mapcap">34 data points at their real coordinates</figcaption>
+      </figure>
+    </div>
+  </div>
+</div>
+
+<main class="wrap">
+  <section id="pipeline">
+    <div class="sec-head">
+      <h2>From the API to a forecast on the web</h2>
+      <p class="lede">Each step is a separate Python script. Steps 1 and 4 run automatically every hour. The other steps run only when we retrain the models.</p>
+    </div>
+    <div class="pipe-wrap"><span class="flowdot" aria-hidden="true"></span>
+    <ol class="pipe">
+      <li><h3>Collect</h3><p>Call the Open-Meteo API for 34 locations: 12 weather variables, 7 air quality variables, and Open-Meteo's own forecast for comparison.</p>
+        <span class="stat num">Every hour<small>history since Nov 2021</small></span></li>
+      <li><h3>Process with PySpark</h3><p>Clean the data, remove duplicates and invalid values, join weather with air quality, and aggregate by province and month.</p>
+        <span class="stat num">25 seconds<small>1,494,096 + 1,275,408 rows, 16 threads</small></span></li>
+      <li><h3>Train models</h3><p>6 XGBoost models on the GPU: temperature and PM2.5, each for 1, 3 and 6 hours ahead. The data is split by time.</p>
+        <span class="stat num">126 seconds<small>47 and 75 features</small></span></li>
+      <li><h3>Forecast in real time</h3><p>Take the last 48 hours, build the same features as in training, and save forecasts for all 34 provinces.</p>
+        <span class="stat num">204 forecasts<small>every run</small></span></li>
+      <li><h3>Web app and AI assistant</h3><p>Streamlit shows the map, history, forecasts and evaluation. Qwen3 8B runs on the GPU with Ollama to answer questions.</p>
+        <span class="stat num">7 pages<small>refresh every 5 minutes</small></span></li>
+    </ol>
+    </div>
+  </section>
+
+  <section id="results">
+    <div class="sec-head">
+      <h2>Our model beats every baseline</h2>
+      <p class="lede">We tested on the last 180 days, which the models never saw in training: 146,914 samples for each model. Lower mean absolute error (MAE) is better.</p>
+    </div>
+    <div class="results">
+      <div>
+        <div class="seg" role="group" aria-label="Choose a variable">
+          <button type="button" id="btn-temp" aria-pressed="true">Temperature (°C)</button>
+          <button type="button" id="btn-pm" aria-pressed="false">PM2.5 (µg/m³)</button>
+        </div>
+        <div class="chart"><svg id="chart" viewBox="0 0 560 300" role="img" aria-label="MAE by forecast horizon"></svg></div>
+        <div class="legend">
+          <span><i style="background:var(--bar-1)"></i>Baseline (persistence)</span>
+          <span><i style="background:var(--bar-2)"></i>Ridge Regression</span>
+          <span><i style="background:var(--accent)"></i>XGBoost (main model)</span>
+        </div>
+      </div>
+      <div>
+        <table class="tbl num" aria-describedby="tbl-note">
+          <caption id="tbl-cap">XGBoost, temperature</caption>
+          <thead><tr><th>Horizon</th><th>MAE</th><th>R²</th><th>Better than baseline</th></tr></thead>
+          <tbody id="tbl-body"></tbody>
+        </table>
+        <p class="note" id="tbl-note">The further ahead we forecast, the bigger the gap over the baseline. The Evaluation page in the web app also checks past forecasts against real values every hour, next to the accuracy of Open-Meteo.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="assistant">
+    <div class="chat">
+      <div>
+        <div class="sec-head" style="margin-bottom:0">
+          <h2>Ask a question, get an answer from real data</h2>
+          <p class="lede">The assistant finds the province in your question, even with old province names from before the 2025 merger. It can only answer with the current data and our model's forecasts.</p>
+        </div>
+        <ul class="bul">
+          <li><b>Runs on our own machine.</b> Qwen3 8B with Ollama on an RTX 4060 Ti GPU. No data is sent to outside services.</li>
+          <li><b>Knows old names.</b> Bình Dương and Vũng Tàu are now part of Ho Chi Minh City. Quy Nhơn is now in Gia Lai.</li>
+          <li><b>Shows its data.</b> Every answer comes with the exact data given to the AI.</li>
+        </ul>
+        <div class="aqi" aria-hidden="true"><span style="background:var(--aqi1)"></span><span style="background:var(--aqi2)"></span><span style="background:var(--aqi3)"></span><span style="background:var(--aqi4)"></span><span style="background:var(--aqi5)"></span><span style="background:var(--aqi6)"></span></div>
+        <div class="aqilab num"><span>0</span><span>50</span><span>100</span><span>150</span><span>200</span><span>300</span><span>500</span></div>
+        <p class="note" style="margin-top:8px">The US AQI scale that the assistant uses for its advice.</p>
+      </div>
+      <div class="bubbles" id="bubbles" aria-label="Example conversation">
+        <span class="tag">Example only, not real data</span>
+        <div class="b u" style="--d:.1s">Is it a good idea to go running in Bình Dương this afternoon?</div>
+        <div class="b a" style="--d:.7s">Bình Dương is now part of Ho Chi Minh City. At 15:00 it is about 33 °C and the US AQI is moderate. Our model expects about 30 °C in 3 hours, so it is better to run after 17:30 and bring water.</div>
+        <div class="b u" style="--d:1.4s">How about Da Lat?</div>
+        <div class="b a" style="--d:2s">Da Lat (Lâm Đồng) is much cooler, about 20 °C, and the air quality is good. It is a more comfortable place to run.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="limitations">
+    <div class="sec-head">
+      <h2>Known limitations</h2>
+    </div>
+    <ul class="limits">
+      <li><h3>The data comes from models, not weather stations</h3><p>The weather history is reanalysis data. PM2.5 comes from the CAMS model at about 45 km resolution, with one value every 3 hours. This data is smoother than real sensor data, so it is easier to forecast.</p></li>
+      <li><h3>Training data and live data are different</h3><p>We train on reanalysis data but run on Open-Meteo's current data. We track the real accuracy separately on the Evaluation page.</p></li>
+      <li><h3>Short-term forecasts only</h3><p>Forecasting 1 to 6 hours ahead is the easiest part of weather forecasting. Forecasts for several days need physical models and much more data.</p></li>
+      <li><h3>One machine only</h3><p>Spark runs in local mode on one PC. We load the data into Spark with Apache Arrow, because Hadoop on Windows cannot read the files directly.</p></li>
+    </ul>
+  </section>
+
+  <section id="team">
+    <div class="sec-head">
+      <h2>Group 8</h2>
+      <p class="lede">Final project for the Big Data Analytics course.</p>
+    </div>
+    <div class="team">
+      <div class="member"><div class="av">L</div><div><h3>Ngô Khải Luân</h3><p>Team member</p></div></div>
+      <div class="member"><div class="av">S</div><div><h3>Nguyễn Thanh Sơn</h3><p>Team member</p></div></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Weather data: Open-Meteo.com (ERA5, ECMWF IFS). Air quality data: Copernicus Atmosphere Monitoring Service (CAMS), via Open-Meteo.</span>
+    <span>Provinces follow the 34 administrative units in effect from 1 July 2025. Model results measured on 11 Nov 2026. © 2026 Group 8.</span>
+  </footer>
+</main>
+
+<script>
+(function(){
+  // ----- 34 provinces at their real coordinates -----
+  var P=[["Hà Nội",21.0285,105.8542],["Huế",16.4637,107.5909],["Lai Châu",22.3964,103.4582],["Điện Biên",21.3860,103.0230],["Sơn La",21.3270,103.9141],["Lạng Sơn",21.8537,106.7615],["Quảng Ninh",20.9599,107.0425],["Thanh Hóa",19.8067,105.7852],["Nghệ An",18.6796,105.6813],["Hà Tĩnh",18.3428,105.9057],["Cao Bằng",22.6657,106.2577],["Tuyên Quang",21.8236,105.2140],["Lào Cai",21.7229,104.9113],["Thái Nguyên",21.5942,105.8482],["Phú Thọ",21.3227,105.4019],["Bắc Ninh",21.2731,106.1946],["Hưng Yên",20.6464,106.0511],["Hải Phòng",20.8449,106.6881],["Ninh Bình",20.2506,105.9745],["Quảng Trị",17.4833,106.6000],["Đà Nẵng",16.0544,108.2022],["Quảng Ngãi",15.1214,108.8044],["Gia Lai",13.7820,109.2196],["Khánh Hòa",12.2388,109.1967],["Lâm Đồng",11.9404,108.4583],["Đắk Lắk",12.6667,108.0500],["TP. Hồ Chí Minh",10.7769,106.7009],["Đồng Nai",10.9574,106.8427],["Tây Ninh",10.5360,106.4130],["Cần Thơ",10.0452,105.7469],["Vĩnh Long",10.2537,105.9722],["Đồng Tháp",10.3600,106.3600],["Cà Mau",9.1769,105.1524],["An Giang",10.0125,105.0809]];
+  var NS="http://www.w3.org/2000/svg",svg=document.getElementById("vnmap");
+  var lon0=102.4,lon1=110.0,lat0=8.6,lat1=23.2,W=300,H=600,pad=18;
+  function x(l){return pad+(l-lon0)/(lon1-lon0)*(W-2*pad)}
+  function y(l){return pad+(lat1-l)/(lat1-lat0)*(H-2*pad)}
+  function el(n,a){var e=document.createElementNS(NS,n);for(var k in a)e.setAttribute(k,a[k]);return e}
+  [10,14,18,22].forEach(function(la){
+    svg.appendChild(el("line",{x1:pad,x2:W-pad,y1:y(la),y2:y(la),"class":"grat"}));
+    var t=el("text",{x:W-pad,y:y(la)-4,"text-anchor":"end","class":"gratlab"});t.textContent=la+"°N";svg.appendChild(t);
+  });
+  var dots=[];
+  P.slice().sort(function(a,b){return b[1]-a[1]}).forEach(function(p,i){
+    var cx=x(p[2]),cy=y(p[1]);
+    var r=el("circle",{cx:cx,cy:cy,r:3.6,"class":"ring"});r.style.animationDelay=(i*0.1)+"s";svg.appendChild(r);
+    var c=el("circle",{cx:cx,cy:cy,r:3.6,"class":"prov",tabindex:"0","aria-label":p[0]});
+    function show(){tip.textContent=p[0];var left=cx>W/2;tip.setAttribute("x",cx+(left?-10:10));tip.setAttribute("y",cy+4);tip.setAttribute("text-anchor",left?"end":"start");tip.style.display="";}
+    c.addEventListener("mouseenter",show);c.addEventListener("focus",show);
+    c.addEventListener("mouseleave",function(){tip.style.display="none"});c.addEventListener("blur",function(){tip.style.display="none"});
+    dots.push(c);
+  });
+  dots.forEach(function(c){svg.appendChild(c)});
+  var tip=el("text",{"class":"tip"});tip.style.display="none";svg.appendChild(tip);
+  [["Hanoi",21.0285,105.8542,"end",-10],["Da Nang",16.0544,108.2022,"end",-10],["Ho Chi Minh City",10.7769,106.7009,"start",10]].forEach(function(p){
+    var t=el("text",{x:x(p[2])+p[4],y:y(p[1])+3,"text-anchor":p[3],"class":"city"});t.textContent=p[0];svg.appendChild(t);
+  });
+  svg.appendChild(tip); // keep the hover label on top
+
+  // ----- Results chart -----
+  var D={
+    temp:{name:"temperature",unit:"°C",mae:[[0.6503,0.4415,0.3718],[1.5967,0.8104,0.6451],[2.7061,0.9951,0.7965]],r2:[0.9714,0.9307,0.9014],imp:[42.8,59.6,70.6],max:3},
+    pm:{name:"PM2.5",unit:"µg/m³",mae:[[2.585,2.127,1.743],[6.428,5.117,4.224],[10.427,7.245,6.383]],r2:[0.970,0.879,0.743],imp:[32.6,34.3,38.8],max:12}
+  };
+  var H2=["1 hour","3 hours","6 hours"],COL=["var(--bar-1)","var(--bar-2)","var(--accent)"],NAMES=["Baseline","Ridge","XGBoost"];
+  var ch=document.getElementById("chart");
+  function fmt(v){return v.toLocaleString("en-US",{maximumFractionDigits:2,minimumFractionDigits:2})}
+  function draw(key){
+    var d=D[key];while(ch.firstChild)ch.removeChild(ch.firstChild);
+    var L=44,R=552,T=18,B=262,step=d.max/4;
+    for(var g=0;g<=4;g++){var v=g*step,yy=B-(v/d.max)*(B-T);
+      ch.appendChild(el("line",{x1:L,x2:R,y1:yy,y2:yy,stroke:"var(--rule)","stroke-width":1}));
+      var tl=el("text",{x:L-10,y:yy+4,"text-anchor":"end","font-size":11,fill:"var(--ink-soft)","font-family":"inherit"});tl.textContent=fmt(v).replace(/\.00$/,"");ch.appendChild(tl);}
+    var groupW=(R-L)/3,bw=30,gap=8;
+    d.mae.forEach(function(row,gi){
+      var gx=L+gi*groupW+(groupW-(3*bw+2*gap))/2;
+      row.forEach(function(v,mi){
+        var bx=gx+mi*(bw+gap),bh=(v/d.max)*(B-T),by=B-bh;
+        var rect=el("rect",{x:bx,y:by,width:bw,height:bh,rx:4,fill:COL[mi],"class":"bar"});rect.style.animationDelay=(gi*0.12+mi*0.06)+"s";
+        var tt=el("title",{});tt.textContent=NAMES[mi]+", "+H2[gi]+": MAE "+fmt(v)+" "+d.unit;rect.appendChild(tt);ch.appendChild(rect);
+        var lab=el("text",{x:bx+bw/2,y:by-6,"text-anchor":"middle","font-size":10.5,fill:mi===2?"var(--accent)":"var(--ink-soft)","font-weight":mi===2?600:400,"font-family":"inherit"});
+        lab.textContent=fmt(v);lab.setAttribute("class","blab");lab.style.animationDelay=(0.5+gi*0.12+mi*0.06)+"s";ch.appendChild(lab);
+      });
+      var gl=el("text",{x:L+gi*groupW+groupW/2,y:B+22,"text-anchor":"middle","font-size":12,fill:"var(--ink)","font-family":"inherit"});
+      gl.textContent=H2[gi]+" ahead";ch.appendChild(gl);
+    });
+    ch.setAttribute("aria-label","MAE for "+d.name+" by forecast horizon, 3 models");
+    document.getElementById("tbl-cap").textContent="XGBoost, "+d.name+" (MAE in "+d.unit+")";
+    var tb=document.getElementById("tbl-body");tb.innerHTML="";
+    H2.forEach(function(h,i){var tr=document.createElement("tr");
+      tr.innerHTML="<td>"+h+"</td><td class='win'>"+fmt(d.mae[i][2])+"</td><td>"+d.r2[i].toFixed(2)+"</td><td>"+d.imp[i].toFixed(1)+"%</td>";
+      tb.appendChild(tr);});
+    document.getElementById("btn-temp").setAttribute("aria-pressed",key==="temp");
+    document.getElementById("btn-pm").setAttribute("aria-pressed",key==="pm");
+  }
+  document.getElementById("btn-temp").addEventListener("click",function(){draw("temp")});
+  document.getElementById("btn-pm").addEventListener("click",function(){draw("pm")});
+  var current="temp";
+  document.getElementById("btn-temp").addEventListener("click",function(){current="temp"});
+  document.getElementById("btn-pm").addEventListener("click",function(){current="pm"});
+  draw("temp");
+
+  // ----- Motion that starts when a part scrolls into view (content is visible at rest) -----
+  var reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if(!reduce){
+    // count up the hero numbers once on load
+    document.querySelectorAll(".facts b[data-to]").forEach(function(b){
+      var to=parseFloat(b.dataset.to),dec=+b.dataset.dec,suf=b.dataset.suf||"",t0=null,dur=1400;
+      function step(ts){if(!t0)t0=ts;var k=Math.min(1,(ts-t0)/dur),e=1-Math.pow(1-k,3);
+        b.textContent=(to*e).toFixed(dec)+suf;if(k<1)requestAnimationFrame(step);}
+      requestAnimationFrame(step);
+    });
+    if("IntersectionObserver" in window){
+      var io=new IntersectionObserver(function(es){es.forEach(function(e){
+        if(!e.isIntersecting)return;
+        if(e.target.id==="chart")draw(current);
+        if(e.target.id==="bubbles")e.target.classList.add("play");
+        io.unobserve(e.target);
+      })},{threshold:.35});
+      io.observe(document.getElementById("chart"));io.observe(document.getElementById("bubbles"));
+    }
+  }
+})();
+</script>
+
+</body>
+</html>

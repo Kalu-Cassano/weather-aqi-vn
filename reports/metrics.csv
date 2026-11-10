@@ -1,0 +1,25 @@
+﻿target,horizon_h,model,MAE,RMSE,R2,improve_vs_baseline_%,test_rows
+temperature_2m,1,Baseline (persistence),0.6503,0.9098,0.9301,0.0,146914
+temperature_2m,1,Baseline (same hour yesterday),1.0627,1.5157,0.806,-63.4,146914
+temperature_2m,1,Ridge Regression,0.4415,0.6706,0.962,32.1,146914
+temperature_2m,1,XGBoost,0.3718,0.5817,0.9714,42.8,146914
+temperature_2m,3,Baseline (persistence),1.5967,2.083,0.6336,0.0,146914
+temperature_2m,3,Baseline (same hour yesterday),1.0627,1.5157,0.806,33.4,146914
+temperature_2m,3,Ridge Regression,0.8104,1.1012,0.8976,49.2,146914
+temperature_2m,3,XGBoost,0.6451,0.9062,0.9307,59.6,146914
+temperature_2m,6,Baseline (persistence),2.7061,3.3533,0.0504,0.0,146914
+temperature_2m,6,Baseline (same hour yesterday),1.0627,1.5157,0.806,60.7,146914
+temperature_2m,6,Ridge Regression,0.9951,1.3162,0.8537,63.2,146914
+temperature_2m,6,XGBoost,0.7965,1.0803,0.9014,70.6,146914
+pm2_5,1,Baseline (persistence),2.5848,5.1882,0.9383,0.0,146914
+pm2_5,1,Baseline (same hour yesterday),8.6602,14.7364,0.5024,-235.0,146914
+pm2_5,1,Ridge Regression,2.1273,4.2349,0.9589,17.7,146914
+pm2_5,1,XGBoost,1.7427,3.6022,0.9703,32.6,146914
+pm2_5,3,Baseline (persistence),6.4278,11.7726,0.6824,0.0,146914
+pm2_5,3,Baseline (same hour yesterday),8.6602,14.7364,0.5024,-34.7,146914
+pm2_5,3,Ridge Regression,5.1174,8.807,0.8223,20.4,146914
+pm2_5,3,XGBoost,4.2243,7.251,0.8795,34.3,146914
+pm2_5,6,Baseline (persistence),10.4273,17.9373,0.2628,0.0,146914
+pm2_5,6,Baseline (same hour yesterday),8.6602,14.7364,0.5024,16.9,146914
+pm2_5,6,Ridge Regression,7.2445,11.8686,0.6772,30.5,146914
+pm2_5,6,XGBoost,6.3833,10.5999,0.7426,38.8,146914
