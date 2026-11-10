@@ -9,6 +9,7 @@ import plotly.express as px
 import streamlit as st
 
 import assistant
+import ui_theme as ui
 from config import LOCATIONS
 
 
@@ -25,55 +26,63 @@ PROVINCES = pd.DataFrame(
 )
 # Ngưỡng và màu US AQI của EPA/AirNow:
 # https://www.airnow.gov/aqi/aqi-basics/
-AQI_LEVELS = (
-    (50, "Good", "#00e400", "0–50"),
-    (100, "Moderate", "#ffff00", "51–100"),
-    (150, "Unhealthy for sensitive groups", "#ff7e00", "101–150"),
-    (200, "Unhealthy", "#ff0000", "151–200"),
-    (300, "Very unhealthy", "#8f3f97", "201–300"),
-    (float("inf"), "Hazardous", "#7e0023", "301+"),
+# Màu lấy từ ui_theme để thống nhất với trang giới thiệu.
+AQI_LEVELS = tuple(
+    (float("inf") if index == len(ui.AQI_BANDS) - 1 else limit, label, color, interval)
+    for index, ((limit, label, color), interval) in enumerate(zip(
+        ui.AQI_BANDS, ("0–50", "51–100", "101–150", "151–200", "201–300", "301+"),
+    ))
 )
-NO_AQI = ("No data", "#9ca3af")
+NO_AQI = ("No data", ui.BAR_1)
 NUMERIC_COLUMNS = (
     "temperature_2m", "relative_humidity_2m", "wind_speed_10m", "pm2_5", "us_aqi",
     "weather_code", "precipitation",
 )
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+# Tên mô hình cũ (tiếng Việt) trong các file metrics trước đây -> tên tiếng Anh
+MODEL_NAMES = {
+    "Baseline (giữ nguyên)": "Baseline (persistence)",
+    "Baseline (cùng giờ hôm qua)": "Baseline (same hour yesterday)",
+}
+STRONG_MODEL = "XGBoost"
+
+
+def fmt_time(value) -> str:
+    """Format a timestamp as '11 Nov 2026, 03:05' (no locale needed)."""
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{value.day} {MONTHS[value.month - 1]} {value.year}, {value:%H:%M}"
+
+
+def fmt_date(value) -> str:
+    """Format a timestamp as '11 Nov 2026'."""
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{value.day} {MONTHS[value.month - 1]} {value.year}"
 
 
 def apply_styles() -> None:
+    """Only the parts ui_theme does not cover: weather banner and hourly cards."""
     st.markdown(
-        """
+        f"""
         <style>
-        .block-container {max-width: 1480px; padding-top: 2rem; padding-bottom: 2rem;}
-        h1 {letter-spacing: -.035em;}
-        h2, h3 {letter-spacing: -.02em;}
-        [data-testid="stSidebar"] {border-right: 1px solid #e5eaf2;}
-        [data-testid="stMetric"], .kpi-card {
-            background: #fff; border: 1px solid #e2e8f0; border-radius: 16px;
-            padding: 18px 20px; box-shadow: 0 4px 18px rgba(15, 23, 42, .045);
-        }
-        [data-testid="stMetricLabel"], .kpi-label {color: #64748b; font-size: .87rem;}
-        [data-testid="stMetricValue"] {font-size: clamp(1.3rem, 2.1vw, 2rem); font-weight: 650;}
-        .kpi-card {min-height: 152px; border-top: 3px solid #1f6feb;}
-        .kpi-value {font-size: clamp(1.4rem, 2.4vw, 2.1rem); font-weight: 700;
-                    letter-spacing: -.04em; color: #0f172a; margin: 10px 0 4px;}
-        .kpi-detail {color: #64748b; font-size: .85rem;}
-        .weather-banner {display: flex; align-items: center; gap: 16px; padding: 18px 22px;
-            margin-bottom: 20px; border: 1px solid #dbeafe; border-radius: 16px;
-            background: linear-gradient(120deg, #eff6ff, #fff);}
-        .weather-icon {font-size: 2.8rem; line-height: 1;}
-        .weather-title {font-size: 1.15rem; font-weight: 650; color: #0f172a;}
-        .weather-subtitle {font-size: .85rem; color: #64748b; margin-top: 4px;}
-        .hourly-strip {display: grid; grid-template-columns: repeat(6, minmax(146px, 1fr));
-            gap: 12px; overflow-x: auto; padding: 4px 2px 16px; margin-bottom: 12px;}
-        .hour-card {padding: 18px 14px; border-radius: 14px; border: 1px solid #e2e8f0;
-            background: #fff; box-shadow: 0 3px 12px rgba(15, 23, 42, .04);}
-        .hour-time {font-weight: 650; color: #334155;}
-        .hour-date {font-size: .75rem; color: #64748b; margin: 2px 0 12px;}
-        .hour-temp {font-size: 1.65rem; font-weight: 700; color: #0f172a;}
-        .hour-rain {color: #64748b; font-size: .8rem; margin-top: 8px;}
-        .hour-model {font-size: .8rem; font-weight: 600; color: #1f6feb;
-            border-top: 1px solid #edf2f7; margin-top: 12px; padding-top: 10px;}
+        .weather-banner {{display: flex; align-items: center; gap: 16px; padding: 16px 22px;
+            margin-bottom: 18px; border-radius: 16px; background: {ui.PANEL};
+            box-shadow: 0 1px 2px rgba(15,30,40,.05), 0 8px 24px rgba(15,30,40,.05);}}
+        .weather-icon {{font-size: 2.4rem; line-height: 1;}}
+        .weather-title {{font-size: 1.1rem; font-weight: 600; color: {ui.INK};}}
+        .weather-subtitle {{font-size: .86rem; color: {ui.INK_SOFT}; margin-top: 4px;}}
+        .hourly-strip {{display: grid; grid-template-columns: repeat(6, minmax(130px, 1fr));
+            gap: 12px; overflow-x: auto; padding: 4px 2px 12px; margin-bottom: 8px;}}
+        .hour-card {{padding: 16px 14px; border-radius: 16px; background: {ui.PANEL};
+            box-shadow: 0 1px 2px rgba(15,30,40,.05), 0 8px 24px rgba(15,30,40,.05);}}
+        .hour-time {{font-weight: 600; color: {ui.INK};}}
+        .hour-date {{font-size: .78rem; color: {ui.INK_SOFT}; margin: 2px 0 10px;}}
+        .hour-temp {{font-size: 1.6rem; font-weight: 500; color: {ui.INK};
+            font-variant-numeric: tabular-nums;}}
+        .hour-rain {{color: {ui.INK_SOFT}; font-size: .8rem; margin-top: 6px;}}
+        .hour-model {{font-size: .8rem; font-weight: 600; color: {ui.ACCENT};
+            border-top: 1px solid {ui.RULE}; margin-top: 10px; padding-top: 8px;}}
         </style>
         """,
         unsafe_allow_html=True,
@@ -186,7 +195,7 @@ def latest_by_location(data: pd.DataFrame) -> pd.DataFrame:
 def selected_history(data: pd.DataFrame, location: str) -> pd.DataFrame:
     if data.empty:
         return data
-    # Một hours quan trắc có thể được thu thập nhiều lần: giữ lần thu mới nhất.
+    # Một giờ quan trắc có thể được thu thập nhiều lần: giữ lần thu mới nhất.
     return data.loc[data["location"].eq(location)].drop_duplicates("time", keep="last")
 
 
@@ -217,96 +226,94 @@ def national_snapshot(weather: pd.DataFrame, air: pd.DataFrame) -> pd.DataFrame:
     return snapshot
 
 
-def kpi_card(column, label: str, value: str, detail: str) -> None:
-    column.markdown(
-        f'<div class="kpi-card"><div class="kpi-label">{escape(label)}</div>'
-        f'<div class="kpi-value">{escape(value)}</div>'
-        f'<div class="kpi-detail">{escape(detail)}</div></div>',
-        unsafe_allow_html=True,
-    )
+def kpi(label: str, value: str, sub: str = "", **options) -> str:
+    """ui.kpi with escaped text (province names and file values go into HTML)."""
+    return ui.kpi(escape(str(label)), escape(str(value)), escape(str(sub)), **options)
+
+
+def aqi_pill(value) -> dict:
+    """Pill options for a US AQI KPI card."""
+    value = None if value is None or pd.isna(value) or value < 0 else float(value)
+    return {"pill": ui.aqi_label(value), "pill_color": ui.aqi_color(value)}
 
 
 def national_map(snapshot: pd.DataFrame, metric: str):
+    """Scatter map of all provinces on a light basemap, colored by temperature or US AQI."""
+    is_temperature = metric == "Temperature"
+    field = "temperature_2m" if is_temperature else "us_aqi"
+    time_field = "weather_time" if is_temperature else "aq_time"
     data = snapshot.copy()
-    data["Temperature"] = data["temperature_2m"].map(
-        lambda value: "No data" if pd.isna(value) else f"{value:.1f} °C"
+    data["Value"] = data[field].map(
+        lambda value: "No data" if pd.isna(value)
+        else (f"{value:.1f} °C" if is_temperature else f"{value:.0f} · {ui.aqi_label(value)}")
     )
-    data["US AQI"] = data["us_aqi"].map(
-        lambda value: "No data" if pd.isna(value) else f"{value:.0f}"
-    )
-    for field, label in (("weather_time", "Weather at"), ("aq_time", "Air quality at")):
-        data[label] = data[field].dt.strftime("%H:%M · %d/%m/%Y").fillna("No data")
-    field = "temperature_2m" if metric == "Temperature" else "us_aqi"
+    data["Updated"] = data[time_field].map(fmt_time)
+    hover = {"latitude": False, "longitude": False, field: False, "Value": True, "Updated": True}
+    labels = {"Value": "Temperature" if is_temperature else "US AQI", "Updated": "Updated"}
     available, missing = data.loc[data[field].notna()], data.loc[data[field].isna()]
-    options = dict(
-        lat="latitude", lon="longitude", hover_name="province",
-        hover_data={
-            "latitude": False, "longitude": False, "temperature_2m": False, "us_aqi": False,
-            "Temperature": True, "US AQI": True, "Weather at": True, "Air quality at": True,
-        },
-        map_style="open-street-map", center={"lat": 16.0, "lon": 106.0}, zoom=4.4, height=590,
-    )
+
     if available.empty:
-        figure = px.scatter_map(data, **options)
-        figure.update_traces(marker={"color": NO_AQI[1], "size": 20, "opacity": 0.9})
+        figure = px.scatter_map(data, lat="latitude", lon="longitude", hover_name="province",
+                                hover_data=hover, labels=labels)
+        figure.update_traces(marker={"color": NO_AQI[1]}, name="No data", showlegend=True)
     else:
-        if field == "temperature_2m":
-            color_options = {"color_continuous_scale": ["#2563eb", "#7dd3fc", "#fbbf24", "#f97316", "#dc2626"]}
-        else:
-            # Thang màu bậc thang theo EPA, không nội suy giữa các mức AQI.
-            color_options = {
-                "range_color": (0, 500),
-                "color_continuous_scale": [
-                    (0, "#00e400"), (.1, "#00e400"), (.1, "#ffff00"), (.2, "#ffff00"),
-                    (.2, "#ff7e00"), (.3, "#ff7e00"), (.3, "#ff0000"), (.4, "#ff0000"),
-                    (.4, "#8f3f97"), (.6, "#8f3f97"), (.6, "#7e0023"), (1, "#7e0023"),
-                ],
-            }
-        figure = px.scatter_map(available, color=field, **color_options, **options)
-        figure.update_traces(marker={"size": 20, "opacity": 0.9})
-        figure.update_coloraxes(colorbar_title="Temperature (°C)" if field == "temperature_2m" else "US AQI")
+        scale = {"color_continuous_scale": ui.TEMP_SCALE} if is_temperature else {
+            "color_continuous_scale": ui.AQI_SCALE, "range_color": (0, 500),
+        }
+        figure = px.scatter_map(
+            available, lat="latitude", lon="longitude", color=field, hover_name="province",
+            hover_data=hover, labels=labels, **scale,
+        )
+        figure.update_coloraxes(colorbar={
+            "title": {"text": "°C" if is_temperature else "US AQI"},
+            "thickness": 12, "len": 0.6, "x": 0.99, "xanchor": "right",
+        })
         if not missing.empty:
-            gray = px.scatter_map(missing, **options)
-            gray.update_traces(
-                marker={"color": NO_AQI[1], "size": 20, "opacity": 0.9},
-                name="No data", showlegend=True,
-            )
+            gray = px.scatter_map(missing, lat="latitude", lon="longitude", hover_name="province",
+                                  hover_data=hover, labels=labels)
+            gray.update_traces(marker={"color": NO_AQI[1]}, name="No data", showlegend=True)
             figure.add_traces(gray.data)
-    figure.update_layout(margin={"l": 0, "r": 0, "t": 0, "b": 0}, legend={"orientation": "h", "y": -.05})
+    ui.style_map(figure, height=560)
+    figure.update_layout(legend={"x": 0.01, "y": 0.02, "xanchor": "left", "yanchor": "bottom",
+                                 "bgcolor": "rgba(255,255,255,.85)"})
     return figure
 
 
 def show_overview(weather: pd.DataFrame, air: pd.DataFrame) -> None:
     snapshot = national_snapshot(weather, air)
-    columns = st.columns(4)
-    for column, field, highest, label, unit in (
-        (columns[0], "temperature_2m", True, "🔥 Highest temperature", " °C"),
-        (columns[1], "temperature_2m", False, "❄️ Lowest temperature", " °C"),
-        (columns[2], "us_aqi", True, "🌫️ Highest US AQI", ""),
+    cards = []
+    for field, highest, label, unit in (
+        ("temperature_2m", True, "Highest temperature", " °C"),
+        ("temperature_2m", False, "Lowest temperature", " °C"),
+        ("us_aqi", True, "Highest US AQI", ""),
     ):
         valid = snapshot.dropna(subset=[field])
         if valid.empty:
-            kpi_card(column, label, "—", "No data")
+            cards.append(kpi(label, "—", "No data"))
             continue
         row = valid.loc[valid[field].idxmax() if highest else valid[field].idxmin()]
         value = metric_value(row, field, unit, 1 if field == "temperature_2m" else 0)
-        kpi_card(column, label, value, row["province"])
+        options = aqi_pill(row[field]) if field == "us_aqi" else {}
+        cards.append(kpi(label, value, row["province"], **options))
     aqi_count = int(snapshot["us_aqi"].notna().sum())
-    kpi_card(
-        columns[3], "⚠️ Provinces with US AQI > 100",
+    cards.append(kpi(
+        "Provinces with US AQI > 100",
         str(int(snapshot["us_aqi"].gt(100).sum())) if aqi_count else "—",
         f"Across {aqi_count}/{len(snapshot)} provinces with AQI data" if aqi_count else "No AQI data",
-    )
+        accent=True,
+    ))
+    ui.kpi_row(cards)
     st.caption(
         f"Latest data for each province · Temperature: {snapshot['temperature_2m'].notna().sum()}/{len(snapshot)} provinces"
         f" · US AQI: {aqi_count}/{len(snapshot)} provinces"
     )
-    st.subheader("🗺️ National map")
+    st.subheader("National map")
     metric = st.segmented_control("Color by", ["Temperature", "US AQI"], default="US AQI", key="national_map_metric")
     st.plotly_chart(national_map(snapshot, metric or "US AQI"), use_container_width=True)
     st.caption("Each point represents one province. Gray means no data for the selected value.")
 
-    st.subheader("🏆 Ranking of 34 provinces")
+    st.divider()
+    st.subheader("Ranking of 34 provinces")
     ranking = snapshot.sort_values(["us_aqi", "temperature_2m", "province"], ascending=[False, False, True], na_position="last")
     ranking = ranking[["province", "temperature_2m", "us_aqi", "aqi_label", "pm2_5", "weather_time", "aq_time"]].reset_index(drop=True)
     ranking.insert(0, "rank", range(1, len(ranking) + 1))
@@ -321,8 +328,8 @@ def show_overview(weather: pd.DataFrame, air: pd.DataFrame) -> None:
             "us_aqi": st.column_config.ProgressColumn("US AQI", min_value=0, max_value=maximum, format="%.0f"),
             "aqi_label": st.column_config.TextColumn("Air quality level", width="medium"),
             "pm2_5": st.column_config.NumberColumn("PM2.5", format="%.1f µg/m³"),
-            "weather_time": st.column_config.DatetimeColumn("Weather time", format="DD/MM HH:mm"),
-            "aq_time": st.column_config.DatetimeColumn("Air quality time", format="DD/MM HH:mm"),
+            "weather_time": st.column_config.DatetimeColumn("Weather time", format="D MMM YYYY, HH:mm"),
+            "aq_time": st.column_config.DatetimeColumn("Air quality time", format="D MMM YYYY, HH:mm"),
         },
     )
 
@@ -376,7 +383,7 @@ def next_six_hours(
 
 
 def show_hourly_forecast(location: str) -> None:
-    st.subheader("🕒 Forecast for the next 6 hours")
+    st.subheader("Forecast for the next 6 hours")
     forecasts = read_table(
         DATA_DIR / "om_forecast.csv", ("fetched_at", "location", "target_time", "temperature_2m", "precipitation"),
         date_columns=("fetched_at", "target_time"), numeric_columns=("temperature_2m", "precipitation"),
@@ -401,7 +408,7 @@ def show_hourly_forecast(location: str) -> None:
             model_line = f'<div class="hour-model">Group model: {row["group_prediction"]:.1f}°C</div>'
         cards.append(
             f'<div class="hour-card"><div class="hour-time">{row["target_time"]:%H:%M}</div>'
-            f'<div class="hour-date">{row["target_time"]:%d/%m}</div>'
+            f'<div class="hour-date">{row["target_time"].day} {MONTHS[row["target_time"].month - 1]}</div>'
             f'<div class="hour-temp">{temperature}</div><div class="hour-rain">💧 Rain: {precipitation}</div>'
             f'{model_line}</div>'
         )
@@ -418,35 +425,28 @@ def show_current(weather: pd.DataFrame, air: pd.DataFrame, location: str) -> Non
     st.markdown(
         f'<div class="weather-banner"><div class="weather-icon">{icon}</div>'
         f'<div><div class="weather-title">{description}</div>'
-        '<div class="weather-subtitle">Weather at the selected province's sample location</div></div></div>',
+        '<div class="weather-subtitle">Weather at the sample location of the selected province</div></div></div>',
         unsafe_allow_html=True,
     )
-    columns = st.columns(4)
-    columns[0].metric("Temperature", metric_value(current_weather, "temperature_2m", " °C"))
-    columns[1].metric("Humidity", metric_value(current_weather, "relative_humidity_2m", " %", 0))
-    columns[2].metric("Wind speed", metric_value(current_weather, "wind_speed_10m", " km/h"))
     aqi = current_air.get("us_aqi", float("nan"))
-    label, color = aqi_level(aqi)
-    with columns[3]:
-        st.metric("US AQI", "—" if label == NO_AQI[0] else f"{aqi:.0f}")
-        text_color = "#111827" if color in ("#00e400", "#ffff00", "#ff7e00", "#9ca3af") else "#ffffff"
-        st.markdown(
-            f'<span style="background:{color};color:{text_color};padding:5px 10px;'
-            f'border-radius:6px;display:inline-block">{label}</span>',
-            unsafe_allow_html=True,
-        )
+    label, _ = aqi_level(aqi)
+    weather_time = "No data" if weather_rows.empty else fmt_time(current_weather["time"])
+    air_time = "No data" if air_rows.empty else fmt_time(current_air["time"])
+    ui.kpi_row([
+        kpi("Temperature", metric_value(current_weather, "temperature_2m", " °C"), weather_time, accent=True),
+        kpi("Humidity", metric_value(current_weather, "relative_humidity_2m", " %", 0), weather_time),
+        kpi("Wind speed", metric_value(current_weather, "wind_speed_10m", " km/h"), weather_time),
+        kpi("US AQI", "—" if label == NO_AQI[0] else f"{aqi:.0f}", air_time, **aqi_pill(aqi)),
+    ])
 
     if weather_rows.empty:
         st.info("No weather data for the selected province yet.")
-    else:
-        st.caption(f"Weather at {current_weather['time']:%H:%M · %d/%m/%Y}")
     if air_rows.empty:
         st.info("No air quality data for the selected province yet.")
-    else:
-        st.caption(f"Air quality at {current_air['time']:%H:%M · %d/%m/%Y}")
 
     show_hourly_forecast(location)
-    st.subheader("🌏 Air quality across 34 provinces")
+    st.divider()
+    st.subheader("Air quality across 34 provinces")
     latest_air = latest_by_location(air)
     map_data = PROVINCES.copy()
     if latest_air.empty:
@@ -460,7 +460,7 @@ def show_current(weather: pd.DataFrame, air: pd.DataFrame, location: str) -> Non
     map_data["US AQI"] = map_data["us_aqi"].map(
         lambda value: "No data" if aqi_level(value) == NO_AQI else f"{value:.0f}"
     )
-    map_data["Time"] = map_data["time"].dt.strftime("%H:%M · %d/%m/%Y").fillna("—")
+    map_data["Time"] = map_data["time"].map(fmt_time)
     colors = {label: color for _, label, color, _ in AQI_LEVELS}
     colors[NO_AQI[0]] = NO_AQI[1]
     figure = px.scatter_map(
@@ -476,20 +476,16 @@ def show_current(weather: pd.DataFrame, air: pd.DataFrame, location: str) -> Non
             "US AQI": True, "Time": True,
         },
         labels={"representative": "Sample location"},
-        map_style="open-street-map",
-        center={"lat": 16.0, "lon": 106.0},
-        zoom=4.4,
-        height=620,
     )
-    figure.update_traces(marker={"size": 13, "opacity": 0.9})
-    figure.update_layout(margin={"l": 0, "r": 0, "t": 0, "b": 0}, showlegend=False)
+    ui.style_map(figure, height=560)
+    figure.update_layout(showlegend=False)
     st.plotly_chart(figure, use_container_width=True)
     legend = []
     for _, level, level_color, interval in AQI_LEVELS:
         legend.append(
             f'<span style="display:inline-block;margin:3px 14px 3px 0">'
             f'<span style="display:inline-block;width:12px;height:12px;'
-            f'background:{level_color};border:1px solid #777;border-radius:50%"></span> '
+            f'background:{level_color};border-radius:50%"></span> '
             f'{interval}: {level}</span>'
         )
     st.markdown("".join(legend), unsafe_allow_html=True)
@@ -500,24 +496,24 @@ def show_current(weather: pd.DataFrame, air: pd.DataFrame, location: str) -> Non
 
 
 def show_history(weather: pd.DataFrame, air: pd.DataFrame, location: str) -> None:
-    for data, column, title, unit, color in (
-        (weather, "temperature_2m", "Temperature", "°C", "#ea580c"),
-        (air, "pm2_5", "PM2.5", "µg/m³", "#2563eb"),
-    ):
-        st.subheader(title)
-        history = selected_history(data, location)
-        if not history.empty:
-            history = history.dropna(subset=[column])
-        if history.empty:
-            st.info(f"No data {title.lower()} for the selected province.")
-            continue
-        figure = px.line(
-            history, x="time", y=column, markers=True,
-            labels={"time": "Time", column: f"{title} ({unit})"},
-        )
-        figure.update_traces(line_color=color, connectgaps=False)
-        figure.update_layout(margin={"l": 0, "r": 0, "t": 10, "b": 0}, height=320)
-        st.plotly_chart(figure, use_container_width=True)
+    for chart_column, (data, column, title, unit) in zip(st.columns(2), (
+        (weather, "temperature_2m", "Temperature", "°C"),
+        (air, "pm2_5", "PM2.5", "µg/m³"),
+    )):
+        with chart_column:
+            st.subheader(title)
+            history = selected_history(data, location)
+            if not history.empty:
+                history = history.dropna(subset=[column])
+            if history.empty:
+                st.info(f"No {title} data for the selected province.")
+                continue
+            figure = px.line(
+                history, x="time", y=column, markers=True,
+                labels={"time": "Time", column: f"{title} ({unit})"},
+            )
+            figure.update_traces(line_color=ui.INK, connectgaps=False)
+            st.plotly_chart(ui.style_chart(figure, height=340), use_container_width=True)
 
 
 def latest_prediction_batch(predictions: pd.DataFrame, location: str) -> pd.DataFrame:
@@ -575,7 +571,7 @@ def verified_realtime_predictions(
         actual = observations.dropna(subset=["location", "time", target]).copy()
         if location is not None:
             actual = actual.loc[actual["location"].eq(location)]
-        # Quan trắc có thể ở phút 15/30/45: giữ bản cuối trong cùng hours.
+        # Quan trắc có thể ở phút 15/30/45: giữ bản cuối trong cùng giờ.
         actual["target_time"] = actual["time"].dt.floor("h")
         actual_sort = [field for field in ("time", "fetched_at") if field in actual.columns]
         actual = actual.sort_values(actual_sort, kind="stable").drop_duplicates(
@@ -590,7 +586,7 @@ def verified_realtime_predictions(
         return pd.DataFrame(columns=columns)
     verified = pd.concat(parts, ignore_index=True)
     if not om_forecasts.empty:
-        # Lần thu gần nhất TRƯỚC target_time, không dùng bản thu bằng/sau hours đích.
+        # Lần thu gần nhất TRƯỚC target_time, không dùng bản thu bằng/sau giờ đích.
         eligible = om_forecasts.loc[
             om_forecasts["fetched_at"].lt(om_forecasts["target_time"])
         ].dropna(subset=["location", "target_time", "temperature_2m"])
@@ -664,17 +660,17 @@ def hourly_realtime_mae(verified: pd.DataFrame, target: str, horizon: int) -> pd
 
 
 def hourly_mae_figure(hourly: pd.DataFrame, title: str, unit: str):
-    # Giữ khoảng trống giữa các hours, bỏ nguồn hoàn toàn chưa có mẫu khỏi chú giải.
+    # Giữ khoảng trống giữa các giờ, bỏ nguồn hoàn toàn chưa có mẫu khỏi chú giải.
     plotted = hourly.groupby("source", group_keys=False).filter(lambda rows: rows["mae"].notna().any())
     figure = px.line(
         plotted, x="hour", y="mae", color="source", markers=True,
         hover_data={"samples": True},
-        labels={"hour": "Forecast target time (UTC+7)", "mae": f"MAE {title.lower()} ({unit})", "source": "Source", "samples": "Samples"},
-        color_discrete_map={"Group model": "#2563eb", "Open-Meteo": "#ea580c"},
+        labels={"hour": "Forecast target time (UTC+7)", "mae": f"{title} MAE ({unit})", "source": "Source", "samples": "Samples"},
+        color_discrete_map={"Group model": ui.ACCENT, "Open-Meteo": ui.OPEN_METEO},
     )
     figure.update_traces(connectgaps=False)
-    figure.update_layout(height=340, margin={"l": 0, "r": 0, "t": 10, "b": 0}, legend_title_text="", yaxis_rangemode="tozero")
-    return figure
+    figure.update_layout(legend_title_text="", yaxis_rangemode="tozero")
+    return ui.style_chart(figure, height=340)
 
 
 def past_forecast_comparison(
@@ -697,13 +693,16 @@ def comparison_chart(data: pd.DataFrame, series: list[str], title: str, unit: st
         data, x="target_time", y=series, markers=True,
         labels={"target_time": "Time", "value": f"{title} ({unit})", "variable": "Source"},
         color_discrete_map={
-            "Actual": "#111827", "Group model": "#2563eb", "XGBoost": "#2563eb",
-            "Open-Meteo": "#ea580c", "Baseline": "#9ca3af",
+            **ui.MODEL_COLORS, "Actual": ui.INK, "Group model": ui.ACCENT,
+            STRONG_MODEL: ui.ACCENT, "Open-Meteo": ui.OPEN_METEO,
         },
     )
     figure.update_traces(connectgaps=False)
-    figure.update_layout(height=340, margin={"l": 0, "r": 0, "t": 10, "b": 0}, legend_title_text="")
-    st.plotly_chart(figure, use_container_width=True)
+    for trace in figure.data:
+        if trace.name.startswith("Baseline"):
+            trace.line.dash = "dot"
+    figure.update_layout(legend_title_text="")
+    st.plotly_chart(ui.style_chart(figure, height=340), use_container_width=True)
 
 
 def show_forecast(location: str) -> None:
@@ -726,60 +725,65 @@ def show_forecast(location: str) -> None:
     if batch.empty:
         st.info("No group model forecast for the selected province yet.")
     else:
-        st.caption(f"Latest forecast made at: {batch['made_at'].max():%H:%M · %d/%m/%Y}")
+        st.caption(f"Latest forecast made at: {fmt_time(batch['made_at'].max())}")
         om_latest = latest_om_forecasts(om_forecasts)
         for target, (title, unit) in TARGETS.items():
             st.markdown(f"**{title} ({unit})**")
-            for column, horizon in zip(st.columns(3), HORIZONS):
-                with column:
-                    st.markdown(f"**{horizon} hours ahead**")
-                    rows = batch.loc[batch["target"].eq(target) & batch["horizon_h"].eq(horizon)]
-                    if rows.empty:
-                        st.info("The latest forecast does not include this time yet.")
-                        continue
-                    row = rows.iloc[-1]
-                    st.caption(f"Forecast time: {row['target_time']:%H:%M · %d/%m/%Y}")
-                    if target == "temperature_2m":
-                        match = pd.DataFrame() if om_latest.empty else om_latest.loc[
-                            om_latest["location"].eq(location)
-                            & om_latest["target_time"].eq(row["target_time"])
-                        ]
-                        om_row = match.iloc[-1] if not match.empty else pd.Series(dtype=object)
-                        model_column, om_column = st.columns(2)
-                        model_column.metric("Group model", metric_value(row, "prediction", f" {unit}"))
-                        om_column.metric("Open-Meteo", metric_value(om_row, "temperature_2m", " °C"))
-                        if not match.empty:
-                            st.caption(f"Fetched at {om_row['fetched_at']:%H:%M · %d/%m/%Y}")
-                        else:
-                            st.caption("No Open-Meteo forecast for the same time yet.")
-                    else:
-                        st.metric("Group model", metric_value(row, "prediction", f" {unit}"))
+            model_cards, om_cards = [], []
+            for horizon in HORIZONS:
+                label = f"{horizon} hours ahead"
+                rows = batch.loc[batch["target"].eq(target) & batch["horizon_h"].eq(horizon)]
+                if rows.empty:
+                    model_cards.append(kpi(label, "—", "The latest forecast does not include this time yet."))
+                    om_cards.append(kpi(f"Open-Meteo · {label}", "—", "No forecast for this time yet."))
+                    continue
+                row = rows.iloc[-1]
+                model_cards.append(kpi(
+                    f"Group model · {label}", metric_value(row, "prediction", f" {unit}"),
+                    f"For {fmt_time(row['target_time'])}", accent=True,
+                ))
+                if target == "temperature_2m":
+                    match = pd.DataFrame() if om_latest.empty else om_latest.loc[
+                        om_latest["location"].eq(location)
+                        & om_latest["target_time"].eq(row["target_time"])
+                    ]
+                    om_row = match.iloc[-1] if not match.empty else pd.Series(dtype=object)
+                    om_cards.append(kpi(
+                        f"Open-Meteo · {label}", metric_value(om_row, "temperature_2m", " °C"),
+                        f"Fetched at {fmt_time(om_row['fetched_at'])}" if not match.empty
+                        else "No Open-Meteo forecast for the same time yet.",
+                    ))
+            ui.kpi_row(model_cards)
+            if target == "temperature_2m":
+                ui.kpi_row(om_cards)
         now = pd.Timestamp.now(tz="Asia/Ho_Chi_Minh").tz_localize(None)
         if batch["target_time"].max() < now:
             st.caption("These forecast times have passed. Please wait for the next forecast.")
 
+    st.divider()
     st.subheader("Past forecasts vs actual values")
     horizon = st.selectbox("Forecast horizon to compare", HORIZONS, format_func=lambda h: f"{h} hours", key="forecast_horizon")
     st.caption("Match the province and hour. Use the last observation in the hour and only forecasts made before the target time.")
     weather = read_table(DATA_DIR / "weather_current.csv", ("location", "time", "fetched_at", "temperature_2m"))
     air = read_table(DATA_DIR / "aq_current.csv", ("location", "time", "fetched_at", "pm2_5"))
     now = pd.Timestamp.now(tz="Asia/Ho_Chi_Minh").tz_localize(None)
-    for target, (title, unit) in TARGETS.items():
-        st.markdown(f"**{title} · forecast horizon: {horizon} hours**")
-        comparison = past_forecast_comparison(
-            predictions, weather if target == "temperature_2m" else air,
-            om_forecasts, location, target, horizon, now,
-        )
-        if len(comparison) < 2:
-            st.info("We need a few more hours of data to compare.")
-            continue
-        series = ["Actual", "Group model"]
-        if target == "temperature_2m":
-            if "Open-Meteo" in comparison and comparison["Open-Meteo"].notna().any():
-                series.append("Open-Meteo")
-            else:
-                st.caption("No valid Open-Meteo forecasts for the same hours yet.")
-        comparison_chart(comparison, series, title, unit)
+    for chart_column, (target, (title, unit)) in zip(st.columns(2), TARGETS.items()):
+        with chart_column:
+            st.markdown(f"**{title} · forecast horizon: {horizon} hours**")
+            comparison = past_forecast_comparison(
+                predictions, weather if target == "temperature_2m" else air,
+                om_forecasts, location, target, horizon, now,
+            )
+            if len(comparison) < 2:
+                st.info("We need a few more hours of data to compare.")
+                continue
+            series = ["Actual", "Group model"]
+            if target == "temperature_2m":
+                if "Open-Meteo" in comparison and comparison["Open-Meteo"].notna().any():
+                    series.append("Open-Meteo")
+                else:
+                    st.caption("No valid Open-Meteo forecasts for the same hours yet.")
+            comparison_chart(comparison, series, title, unit)
 
 
 def last_test_week(data: pd.DataFrame, location: str, target: str, horizon: int) -> pd.DataFrame:
@@ -807,22 +811,24 @@ def show_etl_report() -> None:
         (("engine", "Engine"), ("weather_rows_raw", "Raw weather rows"), ("aq_rows_raw", "Raw air quality rows"), ("merged_rows", "Merged rows")),
         (("provinces", "Provinces"), ("first_time", "Start time"), ("last_time", "End time"), ("seconds", "Processing time (seconds)")),
     ):
-        for column, (key, label) in zip(st.columns(4), fields):
+        cards = []
+        for key, label in fields:
             value = report.get(key)
             if value is None or isinstance(value, (dict, list)):
                 display = "—"
             elif key in ("first_time", "last_time"):
                 timestamp = pd.to_datetime(str(value), errors="coerce")
-                display = "—" if pd.isna(timestamp) else timestamp.strftime("%d/%m/%Y %H:%M")
+                display = fmt_time(timestamp)
             elif isinstance(value, (int, float)):
                 display = f"{value:,.1f}" if key == "seconds" else f"{value:,.0f}"
             else:
                 display = str(value)
-            column.metric(label, display)
+            cards.append(kpi(label, display, accent=key == "merged_rows"))
+        ui.kpi_row(cards)
 
 
 def show_realtime_accuracy(location: str) -> None:
-    st.subheader("🎯 Real-time accuracy")
+    st.subheader("Real-time accuracy")
     names = dict(zip(PROVINCES["location"], PROVINCES["province"]))
     scope = st.segmented_control(
         "Real-time evaluation area", ["National", "Selected province"],
@@ -852,14 +858,14 @@ def show_realtime_accuracy(location: str) -> None:
     if selected_location is None:
         st.caption(f"Currently {verified['location'].nunique()}/{len(PROVINCES)} provinces have checked forecasts.")
     st.caption(
-        "Mỗi provinces, mục tiêu, hạn và hours dự báo chỉ tính một lần, giữ lần tạo mới nhất. "
-        "Actual là quan trắc cuối cùng trong hours. Open-Meteo dùng lần thu gần nhất trước target_time."
+        "Each province, target, forecast horizon and forecast hour is counted only once (we keep the newest forecast). "
+        "Actual is the last observation in that hour. Open-Meteo uses its last update before the target time."
     )
     chart_horizon = st.selectbox(
         "Forecast horizon for the MAE chart", HORIZONS, format_func=lambda h: f"{h} hours", key="realtime_mae_horizon",
     )
     for target, (title, unit) in TARGETS.items():
-        st.markdown(f"**{title} · MAE real-time ({unit})**")
+        st.markdown(f"**{title} · real-time MAE ({unit})**")
         rows = scores.loc[scores["target"].eq(target)]
         if not rows["group_count"].sum():
             st.info("No past forecasts have matching actual values yet. We need a few more hours of data.")
@@ -869,7 +875,7 @@ def show_realtime_accuracy(location: str) -> None:
         st.dataframe(
             realtime_score_display(rows[fields], unit), hide_index=True, use_container_width=True,
             column_config={
-                "horizon_h": st.column_config.NumberColumn("Hạn dự báo", format="%d hours"),
+                "horizon_h": st.column_config.NumberColumn("Forecast horizon", format="%d hours"),
                 "group_mae": st.column_config.TextColumn("Group model MAE"),
                 "group_count": st.column_config.NumberColumn("Checked group forecasts", format="%d"),
                 "group_mae_on_om": st.column_config.TextColumn("Group MAE · same samples as OM"),
@@ -879,19 +885,19 @@ def show_realtime_accuracy(location: str) -> None:
         )
         if target == "temperature_2m":
             st.caption(
-                "Group model MAE dùng toàn bộ dự báo đã kiểm chứng. "
-                "Để so sánh trên cùng tập mẫu, xem “Group MAE · same samples as OM” và “Open-Meteo MAE”. "
-                "“Not enough data” nghĩa là chưa có mẫu phù hợp."
+                "Group model MAE uses all checked forecasts. "
+                "To compare on the same samples, look at “Group MAE · same samples as OM” and “Open-Meteo MAE”. "
+                "“Not enough data” means there are no matching samples yet."
             )
-        st.markdown(f"**MAE {title.lower()} over time · forecast horizon: {chart_horizon} hours**")
+        st.markdown(f"**{title} MAE over time · forecast horizon: {chart_horizon} hours**")
         hourly = hourly_realtime_mae(verified, target, chart_horizon)
         if hourly.empty or not hourly["mae"].notna().any():
             st.info("Not enough data to show hourly real-time MAE.")
             continue
         st.plotly_chart(hourly_mae_figure(hourly, title, unit), use_container_width=True)
         st.caption(
-            "Mỗi hours một điểm: MAE của các dự báo có cùng hours đích và hạn đang chọn, "
-            "gộp các provinces trong phạm vi đánh giá. Rê chuột để xem số mẫu; hours thiếu dữ liệu được để trống."
+            "One point per hour: the MAE of all forecasts for that target hour and the selected horizon, "
+            "across the provinces in the chosen area. Hover to see the number of samples. Hours without data are left empty."
         )
         if target == "temperature_2m":
             st.caption("The two sources may have different sample counts. Without Open-Meteo samples, the chart shows only the group model.")
@@ -908,11 +914,22 @@ def show_evaluation(location: str) -> None:
     )
     st.subheader("Test set results")
     st.caption("Lower MAE and RMSE are better. R² closer to 1 is better. Scores cover all provinces in the test set.")
+    if not metrics.empty:
+        metrics = metrics.copy()
+        metrics["model"] = metrics["model"].astype(str).str.strip().replace(MODEL_NAMES)
+    # Đọc tên mô hình từ file, giữ thứ tự xuất hiện trong file
+    model_order = list(pd.unique(metrics["model"])) if not metrics.empty else []
+    # Mô hình không có trong ui.MODEL_COLORS thì dùng màu xám trung tính
+    model_colors = {**{name: ui.BAR_3 for name in model_order}, **ui.MODEL_COLORS}
     for target, (title, unit) in TARGETS.items():
         st.markdown(f"**{title} ({unit})**")
-        rows = pd.DataFrame() if metrics.empty else metrics.loc[metrics["target"].eq(target)].sort_values(["horizon_h", "model"])
+        rows = pd.DataFrame() if metrics.empty else metrics.loc[metrics["target"].eq(target)]
+        if not rows.empty:
+            rows = rows.assign(_order=rows["model"].map(model_order.index)).sort_values(
+                ["horizon_h", "_order"], kind="stable"
+            ).drop(columns="_order")
         if rows.empty:
-            st.info(f"No scores for {title.lower()}.")
+            st.info(f"No scores for {title}.")
             continue
         st.dataframe(
             rows.drop(columns="target").rename(columns={
@@ -924,41 +941,47 @@ def show_evaluation(location: str) -> None:
         if chart_data.empty:
             st.info("No valid MAE values to show yet.")
         else:
-            chart_data["Hạn dự báo"] = chart_data["horizon_h"].map(lambda h: f"{h:g} hours")
+            chart_data["Forecast horizon"] = chart_data["horizon_h"].map(lambda h: f"{h:g} hours")
             figure = px.bar(
-                chart_data, x="Hạn dự báo", y="MAE", color="model", barmode="group",
+                chart_data, x="Forecast horizon", y="MAE", color="model", barmode="group",
                 labels={"model": "Model", "MAE": f"MAE ({unit})"},
+                color_discrete_map=model_colors, category_orders={"model": model_order},
             )
-            figure.update_layout(height=320, margin={"l": 0, "r": 0, "t": 10, "b": 0})
-            st.plotly_chart(figure, use_container_width=True)
+            figure.update_layout(legend_title_text="")
+            st.plotly_chart(ui.style_chart(figure, height=340), use_container_width=True)
 
+    st.divider()
     horizon = st.selectbox("Forecast horizon for test and feature charts", HORIZONS, format_func=lambda h: f"{h} hours", key="evaluation_horizon")
     st.subheader("Actual vs model vs baseline · last 7 days")
     test_data = read_table(
         REPORT_DIR / "test_predictions.csv",
         ("location", "time", "target", "horizon_h", "target_time", "actual", "baseline", "model"),
-        date_columns=("time", "target_time"), numeric_columns=("horizon_h", "actual", "baseline", "model"),
+        date_columns=("time", "target_time"),
+        numeric_columns=("horizon_h", "actual", "baseline", "baseline_yesterday", "model"),
         valid_columns=("location", "time", "target", "horizon_h", "target_time"),
     )
+    province_names = dict(zip(PROVINCES["location"], PROVINCES["province"]))
     test_location = location
     if not test_data.empty and not test_data["location"].eq(location).any():
         test_location = "tp_hcm"
-        st.info("The selected province is not in the test file. Showing TP. Hồ Chí Minh.")
-    for target, (title, unit) in TARGETS.items():
-        st.markdown(f"**{title} · forecast horizon: {horizon} hours**")
-        week = last_test_week(test_data, test_location, target, horizon)
-        if week.empty:
-            st.info(f"No test data for {title.lower()} for this province and forecast horizon.")
-            continue
-        province_names = dict(zip(PROVINCES["location"], PROVINCES["province"]))
-        st.caption(
-            f"{province_names.get(test_location, test_location)} · "
-            f"{week['target_time'].min():%d/%m/%Y %H:%M} – {week['target_time'].max():%d/%m/%Y %H:%M}"
-        )
-        comparison_chart(
-            week.rename(columns={"actual": "Actual", "model": "XGBoost", "baseline": "Baseline"}),
-            ["Actual", "XGBoost", "Baseline"], title, unit,
-        )
+        st.info(f"The selected province is not in the test file. Showing {province_names.get('tp_hcm', 'tp_hcm')}.")
+    series_names = {
+        "actual": "Actual", "model": STRONG_MODEL,
+        "baseline": "Baseline (persistence)", "baseline_yesterday": "Baseline (same hour yesterday)",
+    }
+    for chart_column, (target, (title, unit)) in zip(st.columns(2), TARGETS.items()):
+        with chart_column:
+            st.markdown(f"**{title} · forecast horizon: {horizon} hours**")
+            week = last_test_week(test_data, test_location, target, horizon)
+            if week.empty:
+                st.info(f"No test data for {title} for this province and forecast horizon.")
+                continue
+            st.caption(
+                f"{province_names.get(test_location, test_location)} · "
+                f"{fmt_time(week['target_time'].min())} – {fmt_time(week['target_time'].max())}"
+            )
+            series = [name for column, name in series_names.items() if column in week.columns]
+            comparison_chart(week.rename(columns=series_names), series, title, unit)
 
     st.subheader("Top 10 important features")
     importance = read_table(
@@ -966,36 +989,42 @@ def show_evaluation(location: str) -> None:
         date_columns=(), numeric_columns=("horizon_h", "importance"),
         valid_columns=("target", "horizon_h", "feature", "importance"),
     )
-    for target, (title, _) in TARGETS.items():
-        st.markdown(f"**{title} · forecast horizon: {horizon} hours**")
-        top = pd.DataFrame() if importance.empty else importance.loc[
-            importance["target"].eq(target) & importance["horizon_h"].eq(horizon)
-        ].sort_values("importance", ascending=False).drop_duplicates("feature").head(10)
-        if top.empty:
-            st.info("No feature importance data for this target and forecast horizon.")
-            continue
-        figure = px.bar(
-            top.sort_values("importance"), x="importance", y="feature", orientation="h",
-            labels={"importance": "Importance", "feature": "Feature"},
-        )
-        figure.update_layout(height=380, margin={"l": 0, "r": 0, "t": 10, "b": 0}, yaxis={"categoryorder": "total ascending"})
-        st.plotly_chart(figure, use_container_width=True)
+    for chart_column, (target, (title, _)) in zip(st.columns(2), TARGETS.items()):
+        with chart_column:
+            st.markdown(f"**{title} · forecast horizon: {horizon} hours**")
+            top = pd.DataFrame() if importance.empty else importance.loc[
+                importance["target"].eq(target) & importance["horizon_h"].eq(horizon)
+            ].sort_values("importance", ascending=False).drop_duplicates("feature").head(10)
+            if top.empty:
+                st.info("No feature importance data for this target and forecast horizon.")
+                continue
+            figure = px.bar(
+                top.sort_values("importance"), x="importance", y="feature", orientation="h",
+                labels={"importance": "Importance", "feature": "Feature"},
+            )
+            figure.update_traces(marker_color=ui.ACCENT)
+            figure.update_layout(yaxis={"categoryorder": "total ascending"})
+            st.plotly_chart(ui.style_chart(figure, height=380), use_container_width=True)
 
+    st.divider()
     show_etl_report()
     images, image_message = load_report_images(str(REPORT_DIR / "figures"))
     if image_message:
         st.caption(image_message)
     if images:
         st.subheader("Report images")
-        for name, content in images:
-            try:
-                st.image(content, caption=name, use_container_width=True)
-            except (OSError, ValueError):
-                st.info(f"Could not show image {name}. Please check the PNG file.")
+        for index, (name, content) in enumerate(images):
+            if index % 2 == 0:
+                image_columns = st.columns(2)
+            with image_columns[index % 2]:
+                try:
+                    st.image(content, caption=name, use_container_width=True)
+                except (OSError, ValueError):
+                    st.info(f"Could not show image {name}. Please check the PNG file.")
 
 
 def show_system_metrics() -> None:
-    st.subheader("📊 Big Data processing with PySpark")
+    st.subheader("Big Data processing with PySpark")
     report, message = load_etl_report(str(ROOT / "data" / "processed" / "etl_report.json"))
     if message:
         st.info(message)
@@ -1006,30 +1035,23 @@ def show_system_metrics() -> None:
         value = report.get(key)
         return f"{value:,.{decimals}f}" if isinstance(value, (int, float)) and pd.notna(value) else "—"
 
-    columns = st.columns(4)
     engine = report.get("engine")
-    for column, label, value, detail in (
-        (columns[0], "⚙️ Engine", engine if isinstance(engine, str) else "—", "ETL engine"),
-        (columns[1], "🌤️ Raw weather rows", number("weather_rows_raw"), "Input rows"),
-        (columns[2], "🌫️ Raw air quality rows", number("aq_rows_raw"), "Input rows"),
-        (columns[3], "🔗 Merged rows", number("merged_rows"), "Rows in merged.parquet"),
-    ):
-        kpi_card(column, label, value, detail)
+    ui.kpi_row([
+        kpi("Engine", engine if isinstance(engine, str) else "—", "ETL engine"),
+        kpi("Raw weather rows", number("weather_rows_raw"), "Input rows"),
+        kpi("Raw air quality rows", number("aq_rows_raw"), "Input rows"),
+        kpi("Merged rows", number("merged_rows"), "Rows in merged.parquet", accent=True),
+    ])
 
     first = pd.to_datetime(str(report.get("first_time", "")), errors="coerce")
     last = pd.to_datetime(str(report.get("last_time", "")), errors="coerce")
-    period = "—" if pd.isna(first) or pd.isna(last) else f"{first:%d/%m/%Y} → {last:%d/%m/%Y}"
-    period_detail = "No valid date range" if pd.isna(first) or pd.isna(last) else f"{first:%d/%m/%Y %H:%M} → {last:%d/%m/%Y %H:%M}"
-    st.write("")
-    columns = st.columns(3)
-    kpi_card(columns[0], "📍 Provinces", number("provinces"), "Area covered by the data")
-    columns[1].markdown(
-        '<div class="kpi-card"><div class="kpi-label">🗓️ Date range</div>'
-        f'<div class="kpi-value" style="font-size:1.15rem;line-height:1.7">{escape(period)}</div>'
-        f'<div class="kpi-detail">{escape(period_detail)}</div></div>',
-        unsafe_allow_html=True,
-    )
-    kpi_card(columns[2], "⏱️ Time xử lý", f"{number('seconds', 1)} seconds", "ETL time from the report")
+    period = "—" if pd.isna(first) or pd.isna(last) else f"{fmt_date(first)} → {fmt_date(last)}"
+    period_detail = "No valid date range" if pd.isna(first) or pd.isna(last) else f"{fmt_time(first)} → {fmt_time(last)}"
+    ui.kpi_row([
+        kpi("Provinces", number("provinces"), "Area covered by the data"),
+        kpi("Date range", period, period_detail),
+        kpi("Processing time", f"{number('seconds', 1)} seconds", "ETL time from the report"),
+    ])
 
 
 def monthly_heatmap_data(monthly: pd.DataFrame, value_column: str) -> pd.DataFrame:
@@ -1059,7 +1081,6 @@ def monthly_heatmap_figure(matrix: pd.DataFrame, title: str, unit: str, colors: 
     figure = px.imshow(
         matrix, aspect="auto", origin="upper", color_continuous_scale=colors,
         labels={"x": "Month", "y": "Province", "color": f"{title} ({unit})"},
-        height=1040,
     )
     figure.update_traces(
         hoverongaps=False,
@@ -1067,14 +1088,15 @@ def monthly_heatmap_figure(matrix: pd.DataFrame, title: str, unit: str, colors: 
     )
     figure.update_layout(
         margin={"l": 0, "r": 0, "t": 10, "b": 0},
-        xaxis={"tickangle": -45, "nticks": 18, "title": "Month"},
-        yaxis={"dtick": 1, "title": "Province", "tickfont": {"size": 11}},
+        xaxis={"tickangle": -45, "nticks": 18, "title": "Month", "showgrid": False},
+        yaxis={"dtick": 1, "title": "Province", "tickfont": {"size": 11}, "showgrid": False},
+        coloraxis_colorbar={"thickness": 12},
     )
-    return figure
+    return ui.style_chart(figure, height=1040)
 
 
 def show_province_summary() -> None:
-    st.subheader("📋 Data summary by province")
+    st.subheader("Data summary by province")
     summary = read_table(
         ROOT / "data" / "processed" / "summary_by_province.csv", ("province",),
         date_columns=("first_time", "last_time"),
@@ -1107,8 +1129,8 @@ def show_province_summary() -> None:
             "location": None,
             "province": st.column_config.TextColumn("Province", width="medium"),
             "rows": st.column_config.NumberColumn("Total rows", format="%d"),
-            "first_time": st.column_config.DatetimeColumn("Start time", format="DD/MM/YYYY HH:mm"),
-            "last_time": st.column_config.DatetimeColumn("End time", format="DD/MM/YYYY HH:mm"),
+            "first_time": st.column_config.DatetimeColumn("Start time", format="D MMM YYYY, HH:mm"),
+            "last_time": st.column_config.DatetimeColumn("End time", format="D MMM YYYY, HH:mm"),
             "avg_temperature": st.column_config.NumberColumn("Average temperature", format="%.2f °C"),
             "max_temperature": st.column_config.NumberColumn("Highest temperature", format="%.1f °C"),
             "avg_pm2_5": st.column_config.NumberColumn("Average PM2.5", format="%.2f µg/m³"),
@@ -1122,59 +1144,66 @@ def show_province_summary() -> None:
 
 
 def show_big_data_system() -> None:
-    st.caption("From data collection to Big Data processing, model training and forecasts.")
-    st.subheader("🔄 Data and forecast pipeline")
+    st.subheader("Data and forecast pipeline")
     st.graphviz_chart(
         r'''
         digraph WeatherAQI {
             graph [rankdir=LR, bgcolor="transparent", pad="0.2", nodesep="0.35", ranksep="0.45"];
-            node [shape=box, style="rounded,filled", fillcolor="#f4f6fa", color="#cbd5e1",
-                  fontname="Arial", fontsize=11, margin="0.14,0.1"];
-            edge [color="#64748b", arrowsize=0.7];
-            api [label="Open-Meteo API", fillcolor="#dbeafe"];
+            node [shape=box, style="rounded,filled", fillcolor="PANEL", color="RULE",
+                  fontname="Segoe UI", fontcolor="INK", fontsize=11, margin="0.14,0.1"];
+            edge [color="INK_SOFT", arrowsize=0.7];
+            api [label="Open-Meteo API", fillcolor="SKY"];
             collect [label="collect_realtime.py\n(every hour)"];
             realtime [label="Real-time CSV\nweather_current.csv\naq_current.csv", shape=folder];
-            archive [label="Open-Meteo Archive", fillcolor="#dbeafe"];
+            archive [label="Open-Meteo Archive", fillcolor="SKY"];
             history_fetch [label="fetch_history.py"];
             history [label="Historical CSV", shape=folder];
-            etl [label="PySpark ETL\nprepare_data.py", fillcolor="#dbeafe"];
+            etl [label="PySpark ETL\nprepare_data.py", fillcolor="ACCENT_SOFT"];
             parquet [label="merged.parquet", shape=folder];
-            train [label="train.py\nXGBoost · GPU", fillcolor="#dbeafe"];
+            train [label="train.py\nXGBoost · GPU", fillcolor="ACCENT_SOFT"];
             models [label="models/", shape=folder];
             predict [label="predictor.py\n(every hour)"];
             predictions [label="predictions.csv", shape=folder];
-            app [label="Streamlit", fillcolor="#1f6feb", fontcolor="white", color="#1f6feb"];
+            app [label="Streamlit", fillcolor="ACCENT", fontcolor="white", color="ACCENT"];
             api -> collect -> realtime;
             archive -> history_fetch -> history -> etl -> parquet -> train -> models -> predict -> predictions -> app;
             realtime -> app;
         }
-        ''',
+        '''
+        # Thay tên màu bằng mã màu của ui_theme (tên dài thay trước để không đè tên ngắn)
+        .replace("ACCENT_SOFT", ui.ACCENT_SOFT).replace("ACCENT", ui.ACCENT)
+        .replace("INK_SOFT", ui.INK_SOFT).replace("INK", ui.INK)
+        .replace("PANEL", ui.PANEL).replace("RULE", ui.RULE).replace("SKY", ui.SKY),
         use_container_width=True,
     )
+    st.divider()
     show_system_metrics()
 
-    st.subheader("🧩 Monthly averages across 34 provinces")
+    st.divider()
+    st.subheader("Monthly averages across 34 provinces")
     monthly = read_table(
         ROOT / "data" / "processed" / "monthly_means.csv",
         ("province", "month", "avg_pm2_5", "avg_temperature"), date_columns=(),
         numeric_columns=("avg_pm2_5", "avg_temperature"), valid_columns=("province", "month"),
     )
     if not monthly.empty:
-        tabs = st.tabs(["🌫️ Average PM2.5", "🌡️ Average temperature"])
+        tabs = st.tabs(["Average PM2.5", "Average temperature"])
+        pm_scale = [[0.0, ui.PAPER], [0.35, "#f3e3a1"], [0.7, ui.OPEN_METEO], [1.0, "#9a3b2a"]]
         for tab, field, title, unit, colors in (
-            (tabs[0], "avg_pm2_5", "Average PM2.5", "µg/m³", "YlOrRd"),
-            (tabs[1], "avg_temperature", "Average temperature", "°C", "RdYlBu_r"),
+            (tabs[0], "avg_pm2_5", "Average PM2.5", "µg/m³", pm_scale),
+            (tabs[1], "avg_temperature", "Average temperature", "°C", ui.TEMP_SCALE),
         ):
             with tab:
                 matrix = monthly_heatmap_data(monthly, field)
                 if matrix.empty:
-                    st.info(f"No data {title.lower()} monthly data to show.")
+                    st.info(f"No monthly {title} data to show.")
                     continue
                 st.caption(
                     f"{len(matrix)} provinces · {matrix.columns[0]} → {matrix.columns[-1]} · "
-                    "Chỉ hiện tháng có dữ liệu; ô trống là chưa có số liệu, không phải giá trị 0."
+                    "Only months with data are shown. An empty cell means no data, not zero."
                 )
                 st.plotly_chart(monthly_heatmap_figure(matrix, title, unit, colors), use_container_width=True)
+    st.divider()
     show_province_summary()
 
 
@@ -1183,26 +1212,25 @@ def clear_ai_chat() -> None:
 
 
 def show_ai_context(context: str) -> None:
-    with st.expander("📊 Data used by AI"):
+    with st.expander("Data used by AI"):
         st.code(context or "No data context is available for this answer.", language="text", wrap_lines=True)
 
 
 def show_ai_chat(location: str) -> None:
     """Show chat without an auto-refresh fragment."""
-    st.subheader("🤖 AI chat")
-    st.write("This AI assistant runs locally on a GPU. It uses real-time data and forecasts from the group model.")
+    ui.page_header("AI assistant", "Ask about weather, air quality and our forecasts.")
+    st.caption("Runs locally on a GPU and uses real-time data and the group model's forecasts. "
+               "This page does not refresh itself, so you can keep typing.")
     messages = st.session_state.setdefault("ai_chat_messages", [])
-    with st.sidebar:
-        st.divider()
-        st.button("🗑️ Clear chat", key="clear_ai_chat", on_click=clear_ai_chat, use_container_width=True)
-        st.caption("AI chat does not refresh itself, so you can keep typing.")
+    if messages:
+        st.button("Clear chat", key="clear_ai_chat", on_click=clear_ai_chat, icon=":material/delete:")
 
     try:
         ok, message = assistant.check_ollama()
     except Exception:
         ok, message = False, "Could not check Ollama. Open Ollama on the server and make sure the model is downloaded."
-    color, background = ("#15803d", "#dcfce7") if ok else ("#b91c1c", "#fee2e2")
-    status = "🟢 Ollama is ready" if ok else "🔴 Ollama is not ready"
+    color, background = (ui.ACCENT, ui.ACCENT_SOFT) if ok else ("#b91c1c", "#fee2e2")
+    status = "Ollama is ready" if ok else "Ollama is not ready"
     st.markdown(
         f'<span style="display:inline-block;padding:6px 12px;border-radius:999px;'
         f'background:{background};color:{color};font-weight:600">{status}</span>',
@@ -1273,14 +1301,20 @@ def show_ai_chat(location: str) -> None:
 def render_page(page: str, location: str) -> None:
     """Read data and update the open data page every five minutes."""
     names = dict(zip(PROVINCES["location"], PROVINCES["province"]))
-    titles = {
-        "overview": "🗺️ National overview", "current": "🌤️ Current",
-        "history": "📈 Real-time history", "forecast": "🔮 Forecast", "evaluation": "🎯 Model evaluation",
-        "system": "⚙️ Big Data system",
+    headers = {
+        "overview": ("National overview", "Latest weather and air quality in 34 provinces."),
+        "current": ("Current weather", "Weather and air quality now and for the next 6 hours."),
+        "history": ("Real-time history", "Hourly observations collected by the system."),
+        "forecast": ("Forecast", "Our model compared with Open-Meteo and real values."),
+        "evaluation": ("Model evaluation", "How accurate our forecasts are."),
+        "system": ("Big Data system", "From data collection to model training and forecasts."),
     }
-    st.subheader(titles[page] if page in ("overview", "system") else f"{titles[page]} · {names[location]}")
+    title, subtitle = headers[page]
+    if page not in ("overview", "system"):
+        title = f"{title} · {names[location]}"
+    ui.page_header(escape(title), escape(subtitle))
     refreshed_at = pd.Timestamp.now(tz="Asia/Ho_Chi_Minh")
-    st.caption(f"Refreshes every 5 minutes · Last shown: {refreshed_at:%H:%M:%S · %d/%m/%Y} (UTC+7)")
+    st.caption(f"Refreshes every 5 minutes · Last shown: {fmt_time(refreshed_at)} (UTC+7)")
     if page == "system":
         show_big_data_system()
     elif page == "forecast":
@@ -1307,36 +1341,43 @@ def render_page(page: str, location: str) -> None:
             show_history(weather, air, location)
 
 
+def last_data_update():
+    """Newest fetch time in the real-time files (uses the cached load_csv), or None."""
+    times = []
+    for name in ("weather_current.csv", "aq_current.csv"):
+        data, _ = load_csv(str(DATA_DIR / name), ("location", "time", "fetched_at"))
+        if not data.empty and "fetched_at" in data and data["fetched_at"].notna().any():
+            times.append(data["fetched_at"].max())
+    return max(times) if times else None
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Weather & AQI VN", page_icon="🌤️", layout="wide",
         initial_sidebar_state="expanded",
     )
+    ui.apply_theme()
+    ui.setup_logo()
     apply_styles()
-    st.title("Weather & AQI VN")
-    st.caption("Track 34 provinces · Observation times are in Vietnam time (UTC+7)")
 
     names = dict(zip(PROVINCES["location"], PROVINCES["province"]))
     codes = list(names)
     with st.sidebar:
-        st.header("🌤️ Weather & AQI VN")
-        st.caption("Weather and air quality at a glance")
         location = st.selectbox(
-            "📍 Province", codes, index=codes.index("tp_hcm"), format_func=names.get,
+            "Province", codes, index=codes.index("tp_hcm"), format_func=names.get,
             key="selected_province",
         )
-        st.caption("Used by Current, History, Forecast, Model evaluation and AI chat.")
-        st.divider()
-        st.caption("Data pages refresh every 5 minutes. AI chat does not refresh itself.")
+    updated = last_data_update()
+    ui.sidebar_note(f"Updated {fmt_time(updated)}" if updated is not None else "")
 
     navigation = st.navigation([
-        st.Page(lambda: render_page("overview", location), title="National overview", icon="🗺️", default=True, url_path="tong-quan"),
-        st.Page(lambda: render_page("current", location), title="Current", icon="🌤️", url_path="hien-tai"),
-        st.Page(lambda: render_page("history", location), title="Real-time history", icon="📈", url_path="lich-su"),
-        st.Page(lambda: render_page("forecast", location), title="Forecast", icon="🔮", url_path="du-bao"),
-        st.Page(lambda: render_page("evaluation", location), title="Model evaluation", icon="🎯", url_path="danh-gia"),
-        st.Page(lambda: render_page("system", location), title="Big Data system", icon="⚙️", url_path="he-thong-big-data"),
-        st.Page(lambda: show_ai_chat(location), title="AI chat", icon="🤖", url_path="hoi-dap-ai"),
+        st.Page(lambda: render_page("overview", location), title="National overview", icon=ui.ICONS["overview"], default=True, url_path="tong-quan"),
+        st.Page(lambda: render_page("current", location), title="Current weather", icon=ui.ICONS["current"], url_path="hien-tai"),
+        st.Page(lambda: render_page("history", location), title="Real-time history", icon=ui.ICONS["history"], url_path="lich-su"),
+        st.Page(lambda: render_page("forecast", location), title="Forecast", icon=ui.ICONS["forecast"], url_path="du-bao"),
+        st.Page(lambda: render_page("evaluation", location), title="Model evaluation", icon=ui.ICONS["evaluation"], url_path="danh-gia"),
+        st.Page(lambda: render_page("system", location), title="Big Data system", icon=ui.ICONS["bigdata"], url_path="he-thong-big-data"),
+        st.Page(lambda: show_ai_chat(location), title="AI assistant", icon=ui.ICONS["chat"], url_path="hoi-dap-ai"),
     ])
     navigation.run()
     st.divider()
