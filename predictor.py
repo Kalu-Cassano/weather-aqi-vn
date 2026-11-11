@@ -121,6 +121,19 @@ def run():
         w.writerows(rows)
     log(f"Mô hình nhóm: ghi {len(rows)} dự báo vào {PRED_FILE.name}")
 
+    # On the home PC: also push the newest data to GitHub for the cloud web app (backup for
+    # GitHub Actions). Any problem here is logged and never stops the hourly collection.
+    if not os.environ.get("GITHUB_ACTIONS") and (config.ROOT / "push_live.py").exists():
+        try:
+            import importlib
+            import sys
+            import push_live
+            if "push_live" in sys.modules:
+                push_live = importlib.reload(sys.modules["push_live"])
+            push_live.run()
+        except Exception as e:
+            log(f"push_live error (data collection continues): {e}")
+
 
 if __name__ == "__main__":
     run()

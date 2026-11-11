@@ -185,9 +185,21 @@ def build_context(question: str, selected_location: str = None) -> str:
         rows.append(f"{name}: {_f(t)}°C, AQI {_f(a, 0)}")
     summary = "### Latest summary for all 34 provinces\n" + "; ".join(rows)
 
-    from datetime import datetime
-    now = f"Current time: {datetime.now():%H:%M} on {datetime.now():%d %b %Y} (Vietnam time, UTC+7)."
-    return "\n\n".join([now] + blocks + [summary])
+    # Vietnam time on any server (Streamlit Cloud runs in UTC). Vietnam has no daylight saving.
+    from datetime import datetime, timedelta, timezone
+    now_vn = datetime.now(timezone(timedelta(hours=7))).replace(tzinfo=None)
+    head = [f"Current time: {now_vn:%H:%M} on {now_vn:%d %b %Y} (Vietnam time, UTC+7)."]
+    if w is not None and "time" in w:
+        try:
+            latest = pd.to_datetime(w["time"]).max()
+            age_h = (now_vn - latest).total_seconds() / 3600
+            head.append(f"Latest observation time in the data: {latest:%H:%M %d %b %Y} ({age_h:.1f} hours ago).")
+            if age_h > 2:
+                head.append("WARNING: the data is OLD. Do not call it 'now'. Tell the user the time of the data "
+                            "and that it may be out of date. Forecast times that are already in the past are not forecasts any more.")
+        except Exception:
+            pass
+    return "\n\n".join(["\n".join(head)] + blocks + [summary])
 
 
 SYSTEM_PROMPT = """You are the weather and air quality assistant of the web app "Weather & AQI VN" (a student Big Data project, Group 8).
@@ -195,7 +207,7 @@ Rules:
 - Use ONLY the numbers in the DATA section below. Never invent numbers. If the data does not have the answer, say that the system does not have this data yet.
 - Answer in the same language as the user's question (Vietnamese or English). In English, use simple, clear English (easy B1 level). Keep answers short (about 100 words) and friendly. Give practical advice (umbrella, mask, stay inside, drink water...).
 - When you use a forecast, prefer "our model" (the self-trained XGBoost model) and say so. You can compare it with Open-Meteo.
-- Always say the time of the data you use. US AQI levels (EPA): 0-50 good, 51-100 moderate, 101-150 unhealthy for sensitive groups, 151-200 unhealthy, above 200 very unhealthy.
+- Always say the time of the data you use. Only call it "now" when it is less than 2 hours old. Only talk about forecasts for times later than the current time. US AQI levels (EPA): 0-50 good, 51-100 moderate, 101-150 unhealthy for sensitive groups, 151-200 unhealthy, above 200 very unhealthy.
 - Vietnam has had 34 provinces since 1 July 2025. If the user uses an old province name, explain in one short sentence which new province it belongs to.
 - Write Vietnamese place names as they appear in the data.
 - Politely refuse questions that are not about weather, air quality or this web app."""
