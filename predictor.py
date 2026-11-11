@@ -13,6 +13,7 @@ Chạy tay để thử:  python predictor.py
 """
 import csv
 import json
+import os
 from datetime import datetime
 
 import pandas as pd
@@ -21,7 +22,8 @@ import config
 from features import make_features
 from om_client import get_json, log
 
-MODEL_DIR = config.ROOT / "models"
+# MODEL_DIR can be changed with an environment variable (GitHub Actions uses cloud_models/)
+MODEL_DIR = config.ROOT / os.environ.get("MODEL_DIR", "models")
 PRED_FILE = config.REALTIME_DIR / "predictions.csv"
 HISTORY_HOURS = 48
 
@@ -61,7 +63,10 @@ def _load_models(meta):
         for t in meta["targets"]:
             for h in meta["horizons"]:
                 m = xgb.XGBRegressor()
-                m.load_model(MODEL_DIR / f"{t}_h{h}.json")
+                path = MODEL_DIR / f"{t}_h{h}.json"
+                if not path.exists():
+                    path = MODEL_DIR / f"{t}_h{h}.ubj"
+                m.load_model(path)
                 m.set_params(device="cpu")  # dự báo vài chục dòng, CPU là đủ
                 models[(t, h)] = m
     else:

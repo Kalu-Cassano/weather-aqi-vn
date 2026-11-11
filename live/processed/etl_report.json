@@ -1,0 +1,12 @@
+{
+  "engine": "pyspark",
+  "weather_rows_raw": 1494096,
+  "aq_rows_raw": 1275408,
+  "merged_rows": 1494096,
+  "duplicates_removed": 0,
+  "provinces": 34,
+  "first_time": "2021-11-01T00:00",
+  "last_time": "2026-11-05T23:00",
+  "rows_with_pm2_5": 1268642,
+  "seconds": 25.0
+}

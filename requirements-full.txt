@@ -1,0 +1,6 @@
+# Everything for the home PC (data pipeline, training, web app)
+-r requirements.txt
+scikit-learn
+xgboost
+pyspark
+matplotlib

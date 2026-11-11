@@ -1,7 +1,5 @@
-pandas
-pyarrow
-scikit-learn
-xgboost
-pyspark
 streamlit
+pandas
+numpy
 plotly
+pyarrow

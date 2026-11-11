@@ -193,7 +193,7 @@ def build_context(question: str, selected_location: str = None) -> str:
 SYSTEM_PROMPT = """You are the weather and air quality assistant of the web app "Weather & AQI VN" (a student Big Data project, Group 8).
 Rules:
 - Use ONLY the numbers in the DATA section below. Never invent numbers. If the data does not have the answer, say that the system does not have this data yet.
-- Answer in simple, clear English (easy B1 level). Keep answers short (about 100 words) and friendly. Give practical advice (umbrella, mask, stay inside, drink water...).
+- Answer in the same language as the user's question (Vietnamese or English). In English, use simple, clear English (easy B1 level). Keep answers short (about 100 words) and friendly. Give practical advice (umbrella, mask, stay inside, drink water...).
 - When you use a forecast, prefer "our model" (the self-trained XGBoost model) and say so. You can compare it with Open-Meteo.
 - Always say the time of the data you use. US AQI levels (EPA): 0-50 good, 51-100 moderate, 101-150 unhealthy for sensitive groups, 151-200 unhealthy, above 200 very unhealthy.
 - Vietnam has had 34 provinces since 1 July 2025. If the user uses an old province name, explain in one short sentence which new province it belongs to.
@@ -202,10 +202,33 @@ Rules:
 
 
 # ---------------------------------------------------------------------------
-# Gọi Ollama
+# AI backends
+#   - On the home PC: Ollama on the local GPU (default).
+#   - On the cloud (no GPU): Groq API, used when GROQ_API_KEY is set (Streamlit secrets).
 # ---------------------------------------------------------------------------
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+
+def _secret(name, default=""):
+    v = os.environ.get(name)
+    if v:
+        return v
+    try:
+        import streamlit as st
+        return str(st.secrets.get(name, default))
+    except Exception:
+        return default
+
+
+def _backend():
+    return "groq" if _secret("GROQ_API_KEY") else "ollama"
+
+
 def check_ollama():
-    """Trả về (ok, thông báo)."""
+    """Status of the AI backend in use. Returns (ok, message)."""
+    if _backend() == "groq":
+        model = _secret("GROQ_MODEL", "qwen/qwen3.8-27b")
+        return True, f"Cloud AI: {model} (Groq API)"
     try:
         with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=3) as r:
             models = [m["name"] for m in json.loads(r.read()).get("models", [])]
@@ -213,21 +236,13 @@ def check_ollama():
         return False, "Cannot connect to Ollama. Please open the Ollama app on the computer that runs this web app."
     if not any(m == OLLAMA_MODEL or m.startswith(OLLAMA_MODEL + ":") for m in models):
         return False, f"Ollama is running but the model {OLLAMA_MODEL} is missing. Run: ollama pull {OLLAMA_MODEL}"
-    return True, f"Local AI: {OLLAMA_MODEL} (running on the server GPU)"
+    return True, f"Local AI: {OLLAMA_MODEL} (running on our GPU)"
 
 
-def ask(question: str, history=None, selected_location: str = None):
-    """Generator trả về từng đoạn câu trả lời (dùng với st.write_stream).
-    history: danh sách {"role": "user"/"assistant", "content": ...} các lượt trước."""
-    context = build_context(question, selected_location)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT + "\n\nDỮ LIỆU:\n" + context}]
-    for m in (history or [])[-6:]:  # chỉ giữ 3 lượt hỏi đáp gần nhất
-        messages.append({"role": m["role"], "content": m["content"]})
-    messages.append({"role": "user", "content": question})
-
+def _stream_ollama(messages):
     body = json.dumps({
         "model": OLLAMA_MODEL, "messages": messages, "stream": True,
-        "think": False,  # tắt chế độ "suy nghĩ" để trả lời nhanh
+        "think": False,  # skip the "thinking" step for faster answers
         "options": {"temperature": 0.3, "num_ctx": 8192},
     }).encode("utf-8")
     req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=body,
@@ -240,27 +255,80 @@ def ask(question: str, history=None, selected_location: str = None):
     except Exception as e:
         yield f"Cannot connect to Ollama ({e}). Please check that the Ollama app is open."
         return
-
-    in_think = False
     with resp:
         for line in resp:
             if not line.strip():
                 continue
             data = json.loads(line)
-            chunk = data.get("message", {}).get("content", "")
-            # phòng trường hợp mô hình vẫn in phần <think>...</think>
-            if "<think>" in chunk:
-                before, _, chunk = chunk.partition("<think>")
-                if before:
-                    yield before
-                in_think = True
-            if in_think:
-                if "</think>" in chunk:
-                    in_think = False
-                    chunk = chunk.partition("</think>")[2].lstrip()
-                else:
-                    continue
-            if chunk:
-                yield chunk
+            yield data.get("message", {}).get("content", "")
             if data.get("done"):
                 break
+
+
+def _stream_groq(messages):
+    key = _secret("GROQ_API_KEY")
+    model = _secret("GROQ_MODEL", "qwen/qwen3.8-27b")
+    payload = {"model": model, "messages": messages, "stream": True,
+               "temperature": 0.3, "max_tokens": 600, "reasoning_format": "hidden"}
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {key}",
+               "User-Agent": "weather-aqi-vn"}
+    resp = None
+    for attempt in range(2):
+        req = urllib.request.Request(GROQ_URL, data=json.dumps(payload).encode("utf-8"), headers=headers)
+        try:
+            resp = urllib.request.urlopen(req, timeout=120)
+            break
+        except urllib.error.HTTPError as e:
+            msg = e.read().decode("utf-8", "replace")
+            if e.code == 400 and "reasoning_format" in msg and attempt == 0:
+                payload.pop("reasoning_format")  # this model does not support the option
+                continue
+            if e.code == 429:
+                yield "The free AI quota is busy right now. Please wait a minute and ask again."
+            else:
+                yield f"Groq error {e.code}: {msg[:200]}"
+            return
+        except Exception as e:
+            yield f"Cannot connect to the cloud AI ({e})."
+            return
+    with resp:
+        for raw in resp:
+            line = raw.decode("utf-8", "replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                delta = json.loads(data)["choices"][0].get("delta", {})
+            except (ValueError, KeyError, IndexError):
+                continue
+            yield delta.get("content") or ""
+
+
+def ask(question: str, history=None, selected_location: str = None):
+    """Generator that yields the answer piece by piece (use with st.write_stream).
+    history: list of {"role": "user"/"assistant", "content": ...} from earlier turns."""
+    context = build_context(question, selected_location)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT + "\n\nDATA:\n" + context}]
+    for m in (history or [])[-6:]:  # keep only the last 3 question/answer pairs
+        messages.append({"role": m["role"], "content": m["content"]})
+    messages.append({"role": "user", "content": question})
+
+    stream = _stream_groq(messages) if _backend() == "groq" else _stream_ollama(messages)
+    in_think = False
+    for chunk in stream:
+        # hide any <think>...</think> part if the model still prints it
+        if "<think>" in chunk:
+            before, _, chunk = chunk.partition("<think>")
+            if before:
+                yield before
+            in_think = True
+        if in_think:
+            if "</think>" in chunk:
+                in_think = False
+                chunk = chunk.partition("</think>")[2].lstrip()
+            else:
+                continue
+        if chunk:
+            yield chunk

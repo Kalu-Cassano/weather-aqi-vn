@@ -12,6 +12,10 @@ import assistant
 import ui_theme as ui
 from config import LOCATIONS
 
+import cloud_sync
+
+cloud_sync.sync()
+
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data" / "realtime"

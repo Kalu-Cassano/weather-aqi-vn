@@ -3,6 +3,7 @@
 Tự động thử lại khi mạng lỗi, và tự chờ khi bị giới hạn số lần gọi (HTTP 429).
 """
 import json
+import os
 import time
 import urllib.error
 import urllib.parse
@@ -44,6 +45,9 @@ def get_json(url: str, params: dict, max_retries: int = 50):
                 reason = body
             if e.code == 429:
                 wait = _wait_for_rate_limit(reason)
+                cap = int(os.environ.get("OM_MAX_WAIT", "0") or 0)
+                if cap and wait > cap:
+                    raise RuntimeError(f"Rate limit hit ({reason.strip()[:80]}), not waiting {wait}s here.")
                 log(f"Bị giới hạn số lần gọi ({reason.strip()[:80]}). Chờ {wait // 60} phút...")
                 time.sleep(wait)
                 continue  # giới hạn tốc độ không tính vào số lần thử
