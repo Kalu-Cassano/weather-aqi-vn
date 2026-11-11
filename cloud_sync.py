@@ -31,6 +31,7 @@ FILES = {
     "realtime/aq_current.csv": config.REALTIME_DIR / "aq_current.csv",
     "realtime/om_forecast.csv": config.REALTIME_DIR / "om_forecast.csv",
     "realtime/predictions.csv": config.REALTIME_DIR / "predictions.csv",
+    "realtime/news.csv": config.REALTIME_DIR / "news.csv",
     "processed/etl_report.json": config.DATA_DIR / "processed" / "etl_report.json",
     "processed/monthly_means.csv": config.DATA_DIR / "processed" / "monthly_means.csv",
     "processed/summary_by_province.csv": config.DATA_DIR / "processed" / "summary_by_province.csv",

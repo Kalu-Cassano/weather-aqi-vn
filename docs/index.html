@@ -203,11 +203,11 @@ footer{border-top:1px solid var(--rule);padding-block:32px 48px;font-size:.86rem
   <section id="pipeline">
     <div class="sec-head">
       <h2>From the API to a forecast on the web</h2>
-      <p class="lede">Each step is a separate Python script. Steps 1 and 4 run automatically every hour. The other steps run only when we retrain the models.</p>
+      <p class="lede">Each step is a separate Python script. Steps 1 and 4 run automatically every hour, on GitHub Actions and on our PC. The other steps run only when we retrain the models.</p>
     </div>
     <div class="pipe-wrap"><span class="flowdot" aria-hidden="true"></span>
     <ol class="pipe">
-      <li><h3>Collect</h3><p>Call the Open-Meteo API for 34 locations: 12 weather variables, 7 air quality variables, and Open-Meteo's own forecast for comparison.</p>
+      <li><h3>Collect</h3><p>Call the Open-Meteo API for 34 locations (12 weather and 7 air quality variables), and scrape weather and disaster news from 8 Vietnamese news feeds.</p>
         <span class="stat num">Every hour<small>history since Nov 2021</small></span></li>
       <li><h3>Process with PySpark</h3><p>Clean the data, remove duplicates and invalid values, join weather with air quality, and aggregate by province and month.</p>
         <span class="stat num">25 seconds<small>1,494,096 + 1,275,408 rows, 16 threads</small></span></li>
@@ -215,7 +215,7 @@ footer{border-top:1px solid var(--rule);padding-block:32px 48px;font-size:.86rem
         <span class="stat num">126 seconds<small>47 and 75 features</small></span></li>
       <li><h3>Forecast in real time</h3><p>Take the last 48 hours, build the same features as in training, and save forecasts for all 34 provinces.</p>
         <span class="stat num">204 forecasts<small>every run</small></span></li>
-      <li><h3>Web app and AI assistant</h3><p>Streamlit shows the map, history, forecasts and evaluation. Qwen3 8B runs on the GPU with Ollama to answer questions.</p>
+      <li><h3>Web app and AI assistant</h3><p>Streamlit shows the map, history, forecasts, news and evaluation. The assistant answers questions from our data and cites news sources.</p>
         <span class="stat num">7 pages<small>refresh every 5 minutes</small></span></li>
     </ol>
     </div>
@@ -255,12 +255,12 @@ footer{border-top:1px solid var(--rule);padding-block:32px 48px;font-size:.86rem
       <div>
         <div class="sec-head" style="margin-bottom:0">
           <h2>Ask a question, get an answer from real data</h2>
-          <p class="lede">The assistant finds the province in your question, even with old province names from before the 2025 merger. It can only answer with the current data and our model's forecasts.</p>
+          <p class="lede">The assistant finds the province in your question, even with old province names from before the 2025 merger. It answers only with our data: current values, our model's forecasts, and news articles from our scraper, which it cites as [1], [2].</p>
         </div>
         <ul class="bul">
-          <li><b>Runs on our own machine.</b> Qwen3 8B with Ollama on an RTX 4060 Ti GPU. No data is sent to outside services.</li>
+          <li><b>Two versions.</b> On our PC, Qwen3 8B runs on our own RTX 4060 Ti GPU with Ollama. The online demo uses the Groq API, so the question and the selected data are sent to Groq.</li>
           <li><b>Knows old names.</b> Bình Dương and Vũng Tàu are now part of Ho Chi Minh City. Quy Nhơn is now in Gia Lai.</li>
-          <li><b>Shows its data.</b> Every answer comes with the exact data given to the AI.</li>
+          <li><b>Shows its sources.</b> News is cited with links, and every answer shows the exact data given to the AI.</li>
         </ul>
         <div class="aqi" aria-hidden="true"><span style="background:var(--aqi1)"></span><span style="background:var(--aqi2)"></span><span style="background:var(--aqi3)"></span><span style="background:var(--aqi4)"></span><span style="background:var(--aqi5)"></span><span style="background:var(--aqi6)"></span></div>
         <div class="aqilab num"><span>0</span><span>50</span><span>100</span><span>150</span><span>200</span><span>300</span><span>500</span></div>

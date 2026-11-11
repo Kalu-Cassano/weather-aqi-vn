@@ -101,6 +101,21 @@ def collect_once():
         f"{len(fc_rows)} dòng dự báo Open-Meteo.")
 
 
+def run_news():
+    """Scrape weather news (news_scraper.py). Reloaded every hour, errors never stop collection."""
+    if not (config.ROOT / "news_scraper.py").exists():
+        return
+    try:
+        if "news_scraper" in sys.modules:
+            module = importlib.reload(sys.modules["news_scraper"])
+        else:
+            module = importlib.import_module("news_scraper")
+        module.run()
+    except Exception:
+        log("Lỗi khi cào tin tức (vẫn tiếp tục thu dữ liệu):")
+        traceback.print_exc()
+
+
 def run_predictor():
     """Nếu đã có predictor.py (mô hình nhóm), gọi nó. Nạp lại mỗi vòng để cập nhật code mới."""
     if not (config.ROOT / "predictor.py").exists():
@@ -127,6 +142,7 @@ def main():
     while True:
         try:
             collect_once()
+            run_news()
             run_predictor()
         except Exception:
             # Không bao giờ dừng hẳn: lỗi 1 vòng thì ghi log và đợi vòng sau

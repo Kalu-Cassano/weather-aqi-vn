@@ -25,6 +25,7 @@ FILES = {  # file name -> columns that identify one row
     "aq_current.csv": ["fetched_at", "location"],
     "om_forecast.csv": ["fetched_at", "location", "target_time"],
     "predictions.csv": ["made_at", "location", "target", "horizon_h"],
+    "news.csv": ["link"],
 }
 
 

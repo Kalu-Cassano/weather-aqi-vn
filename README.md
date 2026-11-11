@@ -3,22 +3,23 @@
 Hourly temperature and PM2.5 forecasts for all 34 provinces of Vietnam.
 Final project for the Big Data Analytics course, **Group 8**.
 
-- **Project page:** see the `docs/` folder (published with GitHub Pages)
-- **Web app:** Streamlit (`app.py`)
+- **Project page:** https://kalu-cassano.github.io/weather-aqi-vn/
+- **Live demo:** https://group8-bigdata-weather.streamlit.app
 
 ## What it does
 
-- Collects new weather and air quality data for 34 provinces **every hour**.
+- Collects new weather and air quality data for 34 provinces **every hour** (Open-Meteo API).
+- **Scrapes weather and disaster news** from 8 Vietnamese news feeds every hour (`news_scraper.py`).
 - Processes about **2.77 million rows** of history with **PySpark**.
 - Trains **6 XGBoost models** (temperature and PM2.5, 1, 3 and 6 hours ahead) and compares them with baselines.
 - Saves **204 new forecasts every hour** and checks old forecasts against real values.
-- Has an **AI assistant** (Qwen3 8B with Ollama, running on a local GPU) that answers questions using the project's data.
+- Has an **AI assistant** that answers questions with the project's data and cites news sources. On the PC it runs Qwen3 8B on a local GPU (Ollama); the online demo uses the Groq API.
 
 ## Pipeline
 
 | Step | Script | Runs |
 |---|---|---|
-| 1. Collect real-time data | `collect_realtime.py` | every hour |
+| 1. Collect real-time data and scrape news | `collect_realtime.py`, `news_scraper.py` | every hour (GitHub Actions + PC) |
 | 2. Download history | `fetch_history.py` | once |
 | 3. Clean and join data with PySpark | `prepare_data.py` | before training |
 | 4. Train and evaluate models | `train.py` | when retraining |
@@ -64,12 +65,15 @@ AI assistant (optional): install [Ollama](https://ollama.com), then run `ollama 
 - The data comes from models, not weather stations: the weather history is reanalysis data, and PM2.5 comes from the CAMS model (about 45 km, one value every 3 hours). This data is smoother than real sensor data.
 - We train on reanalysis data but run on Open-Meteo's current data, so real accuracy can be different. The web app tracks it on the Evaluation page.
 - Forecasts are short-term only (1 to 6 hours).
+- The online demo sends the question and the selected data to the Groq API.
+- Data is stored as CSV/Parquet files in the repository, not in a database.
 - Spark runs in local mode on one PC. On Windows, data is loaded into Spark through Apache Arrow because Hadoop cannot read local files without extra tools.
 
 ## Data sources
 
 - Weather: [Open-Meteo](https://open-meteo.com/) (ERA5, ECMWF IFS)
 - Air quality: Copernicus Atmosphere Monitoring Service (CAMS), via Open-Meteo
+- News: RSS feeds and article pages of VnExpress, Tuổi Trẻ, Thanh Niên, VietnamPlus, VnExpress International, Tuoi Tre News and Viet Nam News (title, short summary and link only; robots.txt respected)
 - Provinces: the 34 provincial-level units of Vietnam in effect from 1 July 2025
 
 ## Team (Group 8)

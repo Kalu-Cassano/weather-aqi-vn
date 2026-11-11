@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-import assistant
+import chat_page
 import ui_theme as ui
 from config import LOCATIONS
 
@@ -1211,96 +1211,6 @@ def show_big_data_system() -> None:
     show_province_summary()
 
 
-def clear_ai_chat() -> None:
-    st.session_state["ai_chat_messages"] = []
-
-
-def show_ai_context(context: str) -> None:
-    with st.expander("Data used by AI"):
-        st.code(context or "No data context is available for this answer.", language="text", wrap_lines=True)
-
-
-def show_ai_chat(location: str) -> None:
-    """Show chat without an auto-refresh fragment."""
-    ui.page_header("AI assistant", "Ask about weather, air quality and our forecasts.")
-    st.caption("Runs locally on a GPU and uses real-time data and the group model's forecasts. "
-               "This page does not refresh itself, so you can keep typing.")
-    messages = st.session_state.setdefault("ai_chat_messages", [])
-    if messages:
-        st.button("Clear chat", key="clear_ai_chat", on_click=clear_ai_chat, icon=":material/delete:")
-
-    try:
-        ok, message = assistant.check_ollama()
-    except Exception:
-        ok, message = False, "Could not check Ollama. Open Ollama on the server and make sure the model is downloaded."
-    color, background = (ui.ACCENT, ui.ACCENT_SOFT) if ok else ("#b91c1c", "#fee2e2")
-    status = "Ollama is ready" if ok else "Ollama is not ready"
-    st.markdown(
-        f'<span style="display:inline-block;padding:6px 12px;border-radius:999px;'
-        f'background:{background};color:{color};font-weight:600">{status}</span>',
-        unsafe_allow_html=True,
-    )
-    if ok:
-        st.caption(message)
-    else:
-        st.error(message)
-        st.caption("After opening Ollama or downloading the model, click the button below to check again.")
-        st.button("🔄 Check connection again", key="ai_check_connection")
-
-    for entry in messages:
-        with st.chat_message(entry["role"]):
-            st.markdown(entry["content"])
-            if entry["role"] == "assistant":
-                show_ai_context(entry.get("context", ""))
-
-    suggestions = st.empty()
-    suggested_question = None
-    if not messages:
-        with suggestions.container():
-            st.markdown("**Try a question**")
-            questions = (
-                "How is the weather in Hanoi in the next 3 hours?",
-                "Which province has the worst air right now?",
-                "Is it a good time to go running in Saigon?",
-                "Compare the weather in Da Nang and Da Lat",
-            )
-            columns = st.columns(2)
-            for index, question in enumerate(questions):
-                if columns[index % 2].button(
-                    question, key=f"ai_suggestion_{index}", disabled=not ok, use_container_width=True,
-                ):
-                    suggested_question = question
-
-    submitted_question = st.chat_input(
-        "Ask about weather, air quality or forecasts…", key="ai_chat_input", disabled=not ok,
-    )
-    question = submitted_question or suggested_question
-    if not ok or not question or not question.strip():
-        return
-    question = question.strip()
-    suggestions.empty()
-    # ask() tự thêm câu hỏi hiện tại: lịch sử chỉ gồm các lượt trước, không chứa metadata.
-    history = [{"role": entry["role"], "content": entry["content"]} for entry in messages]
-    messages.append({"role": "user", "content": question})
-    with st.chat_message("user"):
-        st.markdown(question)
-    context = ""
-    with st.chat_message("assistant"):
-        try:
-            with st.spinner("AI is reading the data and preparing an answer…"):
-                # Chụp ngữ cảnh trước khi sinh câu trả lời, không đọc lại khi xem lịch sử.
-                context = assistant.build_context(question, location)
-                response = st.write_stream(assistant.ask(question, history, location))
-            if not response:
-                response = "The AI did not return an answer. Please try your question again."
-                st.info(response)
-        except Exception:
-            response = "Could not finish the answer. Please check Ollama and try again."
-            st.error(response)
-        show_ai_context(context)
-    messages.append({"role": "assistant", "content": str(response), "context": context, "location": location})
-
-
 @st.fragment(run_every=300)
 def render_page(page: str, location: str) -> None:
     """Read data and update the open data page every five minutes."""
@@ -1374,15 +1284,23 @@ def main() -> None:
     updated = last_data_update()
     ui.sidebar_note(f"Updated {fmt_time(updated)}" if updated is not None else "")
 
-    navigation = st.navigation([
-        st.Page(lambda: render_page("overview", location), title="National overview", icon=ui.ICONS["overview"], default=True, url_path="tong-quan"),
-        st.Page(lambda: render_page("current", location), title="Current weather", icon=ui.ICONS["current"], url_path="hien-tai"),
-        st.Page(lambda: render_page("history", location), title="Real-time history", icon=ui.ICONS["history"], url_path="lich-su"),
-        st.Page(lambda: render_page("forecast", location), title="Forecast", icon=ui.ICONS["forecast"], url_path="du-bao"),
-        st.Page(lambda: render_page("evaluation", location), title="Model evaluation", icon=ui.ICONS["evaluation"], url_path="danh-gia"),
-        st.Page(lambda: render_page("system", location), title="Big Data system", icon=ui.ICONS["bigdata"], url_path="he-thong-big-data"),
-        st.Page(lambda: show_ai_chat(location), title="AI assistant", icon=ui.ICONS["chat"], url_path="hoi-dap-ai"),
-    ])
+    # Ask AI is a plain page (no 5-minute fragment) so the chat is never cleared;
+    # only the data pages below run inside the auto-refresh render_page fragment.
+    ask_ai = st.Page(
+        lambda: chat_page.render(location), title="Ask AI", icon=":material/forum:",
+        default=True, url_path="hoi-dap-ai",
+    )
+    navigation = st.navigation({
+        "": [ask_ai],
+        "Data & model": [
+            st.Page(lambda: render_page("overview", location), title="National overview", icon=ui.ICONS["overview"], url_path="tong-quan"),
+            st.Page(lambda: render_page("current", location), title="Current weather", icon=ui.ICONS["current"], url_path="hien-tai"),
+            st.Page(lambda: render_page("history", location), title="Real-time history", icon=ui.ICONS["history"], url_path="lich-su"),
+            st.Page(lambda: render_page("forecast", location), title="Forecast", icon=ui.ICONS["forecast"], url_path="du-bao"),
+            st.Page(lambda: render_page("evaluation", location), title="Model evaluation", icon=ui.ICONS["evaluation"], url_path="danh-gia"),
+            st.Page(lambda: render_page("system", location), title="Big Data system", icon=ui.ICONS["bigdata"], url_path="he-thong-big-data"),
+        ],
+    })
     navigation.run()
     st.divider()
     st.caption("Data: Open-Meteo, Copernicus Atmosphere Monitoring Service (CAMS). Group 8.")
