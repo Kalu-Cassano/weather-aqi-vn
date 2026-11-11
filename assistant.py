@@ -140,7 +140,7 @@ SOURCES = {
               "https://github.com/Kalu-Cassano/weather-aqi-vn/blob/main/reports/metrics.csv"),
     "omf": (4, "Open-Meteo: hourly forecast", "https://open-meteo.com/en/docs"),
     "daily": (5, "Open-Meteo: daily forecast for the next days", "https://open-meteo.com/en/docs"),
-    "history": (6, "Daily history: Open-Meteo archive (ERA5) and CAMS, processed by our PySpark pipeline",
+    "history": (6, "Daily history: Open-Meteo historical weather API (ERA5) and CAMS, processed by our pipeline",
                 "https://open-meteo.com/en/docs/historical-weather-api"),
 }
 FIRST_NEWS_NUMBER = 7
@@ -270,33 +270,72 @@ def parse_periods(question, now):
     return out[:3]
 
 
+_ARCHIVE_CACHE = {}
+
+
+def _archive_days(code, start, end):
+    """Daily values from the Open-Meteo historical API (ERA5, from 1940), fetched only when our own
+    history file does not cover the dates. Returns a DataFrame with the same columns (no PM2.5)."""
+    key = (code, start, end)
+    if key in _ARCHIVE_CACHE:
+        return _ARCHIVE_CACHE[key]
+    lat, lon = next((l[3], l[4]) for l in config.LOCATIONS if l[0] == code)
+    url = (f"{config.ARCHIVE_URL}?latitude={lat}&longitude={lon}&timezone={config.TIMEZONE}"
+           f"&start_date={start}&end_date={end}&daily=temperature_2m_max,temperature_2m_min,"
+           "temperature_2m_mean,precipitation_sum,wind_speed_10m_max")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "weather-aqi-vn"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            d = json.loads(r.read()).get("daily", {})
+        df = pd.DataFrame(dict(date=d["time"], tmin=d["temperature_2m_min"], tmax=d["temperature_2m_max"],
+                               tmean=d["temperature_2m_mean"], rain=d["precipitation_sum"],
+                               wind_max=d["wind_speed_10m_max"])).dropna(subset=["tmax", "tmin"])
+    except Exception:
+        df = pd.DataFrame(columns=["date", "tmin", "tmax", "tmean", "rain", "wind_max"])
+    _ARCHIVE_CACHE[key] = df
+    return df
+
+
+def _period_bounds(kind, value):
+    if kind == "day":
+        return value, value
+    if kind == "month":
+        start = pd.Timestamp(value + "-01")
+        return start.strftime("%Y-%m-%d"), (start + pd.offsets.MonthEnd(0)).strftime("%Y-%m-%d")
+    if kind == "year":
+        return f"{value}-01-01", f"{value}-12-31"
+    return value
+
+
 def _history_lines(code, periods):
+    if not periods:
+        return []
     h = _read_file(HISTORY_FILE)
-    if h is None or not periods:
-        return []
-    h = h[h["location"] == code]
-    if h.empty:
-        return []
+    h = h[h["location"] == code] if h is not None else pd.DataFrame(columns=["date"])
+    yesterday = (_vn_now() - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     lines = []
-    has_pm = "pm25" in h
     for kind, value, label in periods:
-        if kind == "day":
-            sel = h[h["date"] == value]
-        elif kind == "month":
-            sel = h[h["date"].str.startswith(value)]
-        elif kind == "year":
-            sel = h[h["date"].str.startswith(value)]
-        else:
-            sel = h[(h["date"] >= value[0]) & (h["date"] <= value[1])]
+        start, end = _period_bounds(kind, value)
+        end = min(end, yesterday)
         name = value if kind != "range" else f"{value[0]} to {value[1]}"
-        if sel.empty:
-            lines.append(f"- [6] {name} ({label}): NO DATA in our history "
-                         f"(history covers {h['date'].min()} to {h['date'].max()}).")
+        if start > end or start < "1940-01-01":
+            lines.append(f"- [6] {name} ({label}): NO DATA (this date is in the future or before 1940).")
             continue
-        pm = f", mean PM2.5 {_f(sel['pm25'].mean())} µg/m³" if has_pm and sel["pm25"].notna().any() else ""
+        sel = h[(h["date"] >= start) & (h["date"] <= end)] if not h.empty else h
+        expected = (pd.Timestamp(end) - pd.Timestamp(start)).days + 1
+        if len(sel) < expected:  # not (fully) in our file: ask the Open-Meteo historical API
+            live = _archive_days(code, start, end)
+            if not live.empty:
+                live = live[~live["date"].isin(sel["date"])] if not sel.empty else live
+                sel = pd.concat([sel, live], ignore_index=True).sort_values("date")
+        has_pm = "pm25" in sel and sel["pm25"].notna().any()
+        if sel.empty:
+            lines.append(f"- [6] {name} ({label}): NO DATA for this date.")
+            continue
+        pm = f", mean PM2.5 {_f(sel['pm25'].mean())} µg/m³" if has_pm else ""
         if kind == "day":
             r = sel.iloc[0]
-            lines.append(f"- [6] {name}: {_f(r['tmin'])} to {_f(r['tmax'])}°C (mean {_f(r['tmean'])}°C), "
+            lines.append(f"- [6] {name}: lowest {_f(r['tmin'])}°C, highest {_f(r['tmax'])}°C, daily mean {_f(r['tmean'])}°C, "
                          f"rain {_f(r['rain'])} mm, max wind {_f(r['wind_max'])} km/h{pm}")
         else:
             hot = sel.loc[sel["tmax"].idxmax()]
@@ -355,6 +394,10 @@ def retrieve_events(question, codes, periods, limit=3):
 def _province_block(code, w, aq, preds, omf, used, hist=None, periods=None) -> str:
     """Data for one province. Every line starts with its source number, e.g. [1]."""
     lines = [f"### {NAMES[code]}"]
+    past = _history_lines(code, periods or [])
+    if past:  # question about past dates: give only the history, so the AI does not mix it with today's data
+        used.add("history")
+        return "\n".join(lines + past)
     if w is not None and code in w.index:
         r = w.loc[code]
         code_w = None if pd.isna(r.get("weather_code")) else int(r["weather_code"])
@@ -392,10 +435,6 @@ def _province_block(code, w, aq, preds, omf, used, hist=None, periods=None) -> s
     if days:
         lines.append("- [1] Observed daily values collected by our system: " + "; ".join(days))
         used.add("weather")
-    past = _history_lines(code, periods or [])
-    if past:
-        lines += past
-        used.add("history")
     daily = _daily_forecast(code)
     if daily:
         parts = [f"{r['date']}: {_f(r['tmin'])} to {_f(r['tmax'])}°C, rain {_f(r['rain'])} mm, "
@@ -546,7 +585,9 @@ def build_context_and_sources(question: str, selected_location: str = None):
         sources.append(dict(n=i, title=f"{r['title']} (Wikipedia)", url=r["url"], date=""))
         ev_lines.append(f"- [{i}] {r['title']}: {r['summary']}")
     ev_block = ("### Past weather events in Vietnam (Wikipedia, collected by our scraper)\n" + "\n".join(ev_lines)) if ev_lines else ""
-    text = "\n\n".join(["\n".join(head)] + blocks + [b for b in (news, ev_block) if b] + [summary])
+    if "history" in used:  # past-date question: today's values for all provinces would only confuse the AI
+        summary = ""
+    text = "\n\n".join(["\n".join(head)] + blocks + [b for b in (news, ev_block, summary) if b])
     return text, sources
 
 
@@ -567,7 +608,7 @@ STRICT RULES:
 5. Answer in the same language as the question (Vietnamese or English). In English use simple, clear English (B1 level). Keep it short (about 120 words). Use short bullet points for numbers when helpful. Give practical advice (umbrella, mask, drink water...) only when it follows from the data.
 6. Always say the time of the data. Only call it "now" when it is less than 2 hours old. Only talk about forecasts for times after the current time.
 7. Forecasts: for the next 1 to 6 hours prefer "our model" [3] (trained by Group 8) and you can compare with Open-Meteo [4]. For tomorrow and the next days use only Open-Meteo's daily forecast [5] and say it is Open-Meteo's forecast, not our model. There is no AQI forecast: never predict AQI.
-8. The past: use daily history [6] for numbers on past dates (say they come from reanalysis/model data, not a weather station) and Wikipedia articles for past storms, floods and disasters. If [6] says NO DATA for a date and no article covers it, say you do not have this information.
+8. The past: use daily history [6] for numbers on past dates (say they come from reanalysis/model data, not a weather station) and Wikipedia articles for past storms, floods and disasters. If [6] says NO DATA for a date and no article covers it, say you do not have this information. If the question is only about the past, answer only from [6] and Wikipedia: do not talk about current data or say that current observations do not have that date.
 9. US AQI levels (EPA): 0-50 good, 51-100 moderate, 101-150 unhealthy for sensitive groups, 151-200 unhealthy, above 200 very unhealthy.
 10. Vietnam has 34 provinces since 1 July 2025. If the user uses an old province name, explain briefly which new province it belongs to.
 11. Politely refuse questions that are not about weather, air quality or this web app."""
