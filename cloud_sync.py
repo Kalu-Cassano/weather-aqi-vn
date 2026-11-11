@@ -35,6 +35,8 @@ FILES = {
     "processed/etl_report.json": config.DATA_DIR / "processed" / "etl_report.json",
     "processed/monthly_means.csv": config.DATA_DIR / "processed" / "monthly_means.csv",
     "processed/summary_by_province.csv": config.DATA_DIR / "processed" / "summary_by_province.csv",
+    "processed/daily_history.csv": config.DATA_DIR / "processed" / "daily_history.csv",
+    "processed/events.csv": config.DATA_DIR / "history" / "events.csv",
 }
 
 

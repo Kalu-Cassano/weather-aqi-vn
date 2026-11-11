@@ -13,6 +13,7 @@ Final project for the Big Data Analytics course, **Group 8**.
 - Processes about **2.77 million rows** of history with **PySpark**.
 - Trains **6 XGBoost models** (temperature and PM2.5, 1, 3 and 6 hours ahead) and compares them with baselines.
 - Saves **204 new forecasts every hour** and checks old forecasts against real values.
+- Answers questions about the **past**: daily history for every province since Nov 2021 (`make_history.py`) and past storms, floods and disasters **scraped from Wikipedia** (`wiki_events.py`, official MediaWiki API, every answer links to the article).
 - Has an **AI assistant** that answers questions with the project's data and cites news sources. On the PC it runs Qwen3 8B on a local GPU (Ollama); the online demo uses the Groq API.
 
 ## Pipeline
@@ -73,6 +74,7 @@ AI assistant (optional): install [Ollama](https://ollama.com), then run `ollama 
 
 - Weather: [Open-Meteo](https://open-meteo.com/) (ERA5, ECMWF IFS)
 - Air quality: Copernicus Atmosphere Monitoring Service (CAMS), via Open-Meteo
+- Past events: English and Vietnamese Wikipedia (CC BY-SA), via the MediaWiki API
 - News: RSS feeds and article pages of VnExpress, Tuổi Trẻ, Thanh Niên, VietnamPlus, VnExpress International, Tuoi Tre News and Viet Nam News (title, short summary and link only; robots.txt respected)
 - Provinces: the 34 provincial-level units of Vietnam in effect from 1 July 2025
 

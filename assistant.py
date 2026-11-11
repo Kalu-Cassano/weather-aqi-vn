@@ -16,6 +16,7 @@ Dùng trong app.py:
 import json
 import os
 import re
+import time
 import unicodedata
 import urllib.error
 import urllib.request
@@ -138,11 +139,220 @@ SOURCES = {
     "model": (3, "Group 8: our XGBoost forecast model (test results)",
               "https://github.com/Kalu-Cassano/weather-aqi-vn/blob/main/reports/metrics.csv"),
     "omf": (4, "Open-Meteo: hourly forecast", "https://open-meteo.com/en/docs"),
+    "daily": (5, "Open-Meteo: daily forecast for the next days", "https://open-meteo.com/en/docs"),
+    "history": (6, "Daily history: Open-Meteo archive (ERA5) and CAMS, processed by our PySpark pipeline",
+                "https://open-meteo.com/en/docs/historical-weather-api"),
 }
-FIRST_NEWS_NUMBER = 5
+FIRST_NEWS_NUMBER = 7
+_DAILY_CACHE = {}  # province code -> (time fetched, rows)
 
 
-def _province_block(code, w, aq, preds, omf, used) -> str:
+def _daily_forecast(code):
+    """Next 3 days from Open-Meteo, fetched when a question needs it (cached 30 minutes)."""
+    hit = _DAILY_CACHE.get(code)
+    if hit and time.time() - hit[0] < 1800:
+        return hit[1]
+    lat, lon = next((l[3], l[4]) for l in config.LOCATIONS if l[0] == code)
+    url = (f"{config.FORECAST_URL}?latitude={lat}&longitude={lon}&timezone={config.TIMEZONE}&forecast_days=4"
+           "&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,weather_code")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "weather-aqi-vn"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            d = json.loads(r.read()).get("daily", {})
+        rows = [dict(date=d["time"][i], tmax=d["temperature_2m_max"][i], tmin=d["temperature_2m_min"][i],
+                     rain=d["precipitation_sum"][i], prob=(d.get("precipitation_probability_max") or [None] * 9)[i],
+                     code=d["weather_code"][i]) for i in range(len(d.get("time", [])))]
+    except Exception:
+        rows = []
+    _DAILY_CACHE[code] = (time.time(), rows)
+    return rows
+
+
+def _observed_days(code, hist):
+    """Daily min/max temperature and total rain from the data we collected (last 3 days)."""
+    if hist is None or hist.empty:
+        return []
+    h = hist[hist["location"] == code].copy()
+    if h.empty:
+        return []
+    h["day"] = h["time"].astype(str).str[:10]
+    h = h.drop_duplicates(subset=["time"], keep="last")
+    out = []
+    for day, g in list(h.groupby("day"))[-3:]:
+        out.append(f"{day}: {_f(g['temperature_2m'].min())} to {_f(g['temperature_2m'].max())}°C, "
+                   f"rain {_f(g['precipitation'].sum())} mm ({len(g)} hourly values)")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# The past: daily history (make_history.py) and weather events from Wikipedia (wiki_events.py)
+# ---------------------------------------------------------------------------
+HISTORY_FILE = config.DATA_DIR / "processed" / "daily_history.csv"
+EVENTS_FILE = config.DATA_DIR / "history" / "events.csv"
+_FILE_CACHE = {}
+_MONTHS_EN = {m: i for i, m in enumerate(["january", "february", "march", "april", "may", "june", "july",
+                                          "august", "september", "october", "november", "december"], 1)}
+_MONTHS_EN.update({k[:3]: v for k, v in list(_MONTHS_EN.items())})
+
+
+def _read_file(path):
+    """Read a CSV once and keep it in memory until the file changes."""
+    if not path.exists():
+        return None
+    mtime = path.stat().st_mtime
+    hit = _FILE_CACHE.get(path)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    try:
+        df = pd.read_csv(path, dtype={"years": str})
+    except Exception:
+        return None
+    _FILE_CACHE[path] = (mtime, df)
+    return df
+
+
+def parse_periods(question, now):
+    """Find past dates in the question. Returns a list of (kind, value, label):
+    kind "day" (YYYY-MM-DD), "month" (YYYY-MM), "year" (YYYY) or "range" ((start, end))."""
+    q = question.lower()
+    out = []
+
+    def add(kind, value, label):
+        if (kind, value) not in [(k, v) for k, v, _ in out]:
+            out.append((kind, value, label))
+
+    def year_for(month, day=1):
+        y = now.year
+        return y - 1 if (month, day) > (now.month, now.day) else y
+
+    for m in re.finditer(r"(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)", q):
+        add("day", f"{int(m[1]):04d}-{int(m[2]):02d}-{int(m[3]):02d}", m[0])
+    for m in re.finditer(r"(?<![\d/])(\d{1,2})[/-](\d{1,2})(?:[/-](\d{4}))?(?![\d/])", q):
+        d, mo = int(m[1]), int(m[2])
+        if 1 <= d <= 31 and 1 <= mo <= 12:
+            y = int(m[3]) if m[3] else year_for(mo, d)
+            add("day", f"{y:04d}-{mo:02d}-{d:02d}", m[0])
+    for m in re.finditer(r"ngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})(?:\s+năm\s+(\d{4}))?", q):
+        d, mo = int(m[1]), int(m[2])
+        y = int(m[3]) if m[3] else year_for(mo, d)
+        add("day", f"{y:04d}-{mo:02d}-{d:02d}", m[0])
+    for m in re.finditer(r"tháng\s+(\d{1,2})(?:\s*(?:/|-|năm)\s*(\d{4}))?", q):
+        mo = int(m[1])
+        if 1 <= mo <= 12 and not re.search(r"ngày\s+\d{1,2}\s+$", q[:m.start()]):
+            y = int(m[2]) if m[2] else year_for(mo)
+            add("month", f"{y:04d}-{mo:02d}", m[0])
+    for m in re.finditer(r"\b(\d{1,2})?\s*(january|february|march|april|may|june|july|august|september|october|"
+                         r"november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\.?\s*(\d{1,2})?,?\s*(\d{4})?\b", q):
+        mo = _MONTHS_EN.get(m[2][:3])
+        day = m[1] or m[3]
+        if not mo or (not day and not m[4] and m[2] in ("may", "mar")):
+            continue  # plain "may" / "mar" are usually not months
+        y = int(m[4]) if m[4] else year_for(mo, int(day) if day else 1)
+        if day:
+            add("day", f"{y:04d}-{mo:02d}-{int(day):02d}", m[0].strip())
+        else:
+            add("month", f"{y:04d}-{mo:02d}", m[0].strip())
+    if not any(k in ("day", "month") for k, _, _ in out):
+        for m in re.finditer(r"(?<!\d)(19\d\d|20\d\d)(?!\d)", q):
+            add("year", m[1], m[1])
+    if re.search(r"(?<!\w)(năm ngoái|năm trước|last year)(?!\w)", q):
+        add("year", str(now.year - 1), "last year")
+    if re.search(r"(?<!\w)(tháng trước|last month)(?!\w)", q):
+        y, mo = (now.year, now.month - 1) if now.month > 1 else (now.year - 1, 12)
+        add("month", f"{y:04d}-{mo:02d}", "last month")
+    if re.search(r"(?<!\w)(tuần trước|last week)(?!\w)", q):
+        start, end = (now - pd.Timedelta(days=13)).strftime("%Y-%m-%d"), (now - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
+        add("range", (start, end), "last week")
+    for m in re.finditer(r"(?<!\w)(\d{1,3}) (?:ngày trước|days ago)(?!\w)", q):
+        add("day", (now - pd.Timedelta(days=int(m[1]))).strftime("%Y-%m-%d"), m[0])
+    if re.search(r"(?<!\w)(hôm kia|day before yesterday)(?!\w)", q):
+        add("day", (now - pd.Timedelta(days=2)).strftime("%Y-%m-%d"), "2 days ago")
+    return out[:3]
+
+
+def _history_lines(code, periods):
+    h = _read_file(HISTORY_FILE)
+    if h is None or not periods:
+        return []
+    h = h[h["location"] == code]
+    if h.empty:
+        return []
+    lines = []
+    has_pm = "pm25" in h
+    for kind, value, label in periods:
+        if kind == "day":
+            sel = h[h["date"] == value]
+        elif kind == "month":
+            sel = h[h["date"].str.startswith(value)]
+        elif kind == "year":
+            sel = h[h["date"].str.startswith(value)]
+        else:
+            sel = h[(h["date"] >= value[0]) & (h["date"] <= value[1])]
+        name = value if kind != "range" else f"{value[0]} to {value[1]}"
+        if sel.empty:
+            lines.append(f"- [6] {name} ({label}): NO DATA in our history "
+                         f"(history covers {h['date'].min()} to {h['date'].max()}).")
+            continue
+        pm = f", mean PM2.5 {_f(sel['pm25'].mean())} µg/m³" if has_pm and sel["pm25"].notna().any() else ""
+        if kind == "day":
+            r = sel.iloc[0]
+            lines.append(f"- [6] {name}: {_f(r['tmin'])} to {_f(r['tmax'])}°C (mean {_f(r['tmean'])}°C), "
+                         f"rain {_f(r['rain'])} mm, max wind {_f(r['wind_max'])} km/h{pm}")
+        else:
+            hot = sel.loc[sel["tmax"].idxmax()]
+            cold = sel.loc[sel["tmin"].idxmin()]
+            wet = sel.loc[sel["rain"].idxmax()]
+            lines.append(f"- [6] {name} ({len(sel)} days): {_f(sel['tmin'].min())} to {_f(sel['tmax'].max())}°C, "
+                         f"mean {_f(sel['tmean'].mean())}°C, total rain {_f(sel['rain'].sum())} mm, rainy days (>1 mm) "
+                         f"{int((sel['rain'] > 1).sum())}{pm}; hottest day {hot['date']} ({_f(hot['tmax'])}°C), "
+                         f"coldest {cold['date']} ({_f(cold['tmin'])}°C), wettest {wet['date']} ({_f(wet['rain'])} mm)")
+            if kind == "year":
+                m = sel.assign(month=sel["date"].str[:7]).groupby("month").agg(
+                    tmin=("tmin", "min"), tmax=("tmax", "max"), rain=("rain", "sum"))
+                lines.append("- [6] by month: " + "; ".join(
+                    f"{i}: {_f(r.tmin)}-{_f(r.tmax)}°C, rain {_f(r.rain, 0)} mm" for i, r in m.iterrows()))
+    return lines
+
+
+_PAST_WORDS = re.compile(r"(?<!\w)(năm|lịch sử|từng|trước đây|kỷ lục|thiệt hại|tàn phá|history|historic|ever|past|"
+                         r"deadliest|strongest|worst|damage|record|in the past)(?!\w)", re.IGNORECASE)
+
+
+def retrieve_events(question, codes, periods, limit=3):
+    ev = _read_file(EVENTS_FILE)
+    if ev is None or ev.empty:
+        return []
+    ev = ev.fillna("")
+    try:
+        from news_scraper import classify
+        q_topics, q_regions = map(set, classify(question))
+    except Exception:
+        q_topics, q_regions = set(), set()
+    q_topics.discard("weather")
+    q_years = {str(v)[:4] for k, v, _ in periods if k != "range"}
+    q_tokens = _tokens(question)
+    vi = bool(_VI_CHARS.search(question))
+    if not (q_years or q_topics or _PAST_WORDS.search(question)):
+        return []
+    scored = []
+    for _, r in ev.iterrows():
+        years = set(filter(None, str(r["years"]).split(";")))
+        if q_years and not (years & q_years):
+            continue
+        score = 3 * len(q_tokens & _tokens(r["title"]))
+        score += 3 * len(set(filter(None, str(r["provinces"]).split(";"))) & set(codes))
+        score += 2 * len(set(filter(None, str(r["regions"]).split(";"))) & q_regions)
+        score += 2 * len(set(filter(None, str(r["topics"]).split(";"))) & q_topics)
+        score += min(3, len(q_tokens & _tokens(r["summary"])))
+        if score < 3:  # the year alone is not enough: the topic, place or name must match too
+            continue
+        score += 4 * len(years & q_years) + (1 if (r["lang"] == "vi") == vi else 0)
+        scored.append((score, r))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [r for _, r in scored[:limit]]
+
+
+def _province_block(code, w, aq, preds, omf, used, hist=None, periods=None) -> str:
     """Data for one province. Every line starts with its source number, e.g. [1]."""
     lines = [f"### {NAMES[code]}"]
     if w is not None and code in w.index:
@@ -178,6 +388,20 @@ def _province_block(code, w, aq, preds, omf, used) -> str:
                      f"rain {_f(r['precipitation'])} mm" for _, r in o.iterrows()]
             lines.append("- [4] Open-Meteo hourly forecast: " + "; ".join(parts))
             used.add("omf")
+    days = _observed_days(code, hist)
+    if days:
+        lines.append("- [1] Observed daily values collected by our system: " + "; ".join(days))
+        used.add("weather")
+    past = _history_lines(code, periods or [])
+    if past:
+        lines += past
+        used.add("history")
+    daily = _daily_forecast(code)
+    if daily:
+        parts = [f"{r['date']}: {_f(r['tmin'])} to {_f(r['tmax'])}°C, rain {_f(r['rain'])} mm, "
+                 f"rain chance {_f(r['prob'], 0)}%, {WMO.get(r['code'], 'unknown')}" for r in daily]
+        lines.append("- [5] Open-Meteo daily forecast (NOT our model): " + "; ".join(parts))
+        used.add("daily")
     return "\n".join(lines)
 
 
@@ -270,8 +494,10 @@ def build_context_and_sources(question: str, selected_location: str = None):
     if not codes and selected_location:
         codes = [selected_location]
 
+    hist = _read("weather_current.csv")
+    periods = parse_periods(question, _vn_now())
     used = set()
-    blocks = [_province_block(c, w, aq, preds, omf, used) for c in codes]
+    blocks = [_province_block(c, w, aq, preds, omf, used, hist, periods) for c in codes]
 
     # Summary of all 34 provinces (for "which province is the hottest / most polluted")
     rows = []
@@ -299,17 +525,28 @@ def build_context_and_sources(question: str, selected_location: str = None):
                             "and that it may be out of date. Forecast times that are already in the past are not forecasts any more.")
         except Exception:
             pass
-    head.append("Coverage: this DATA only has the latest observation, forecasts for the next 1 to 6 hours, "
-                "and news from the last 7 days. It has NO data for other past days or for days after the next 6 hours.")
+    head.append("Coverage: this DATA has the latest observation [1][2], daily values we observed in the last few days [1], "
+                "our model's forecast of temperature and PM2.5 for the next 1, 3 and 6 hours [3], Open-Meteo's hourly [4] "
+                "and daily [5] forecasts (daily: today and the next 3 days, only for the provinces listed), and news from the "
+                "last 7 days. Daily history [6] (only for the provinces listed and the dates asked) and past weather events from "
+                "Wikipedia (if listed) cover older dates. There is NO forecast of AQI and NO data for more than 3 days ahead. "
+                "Each day in [5] is shown with its date: match 'tomorrow'/'ngày mai' to the right date.")
 
     sources = [dict(n=SOURCES[k][0], title=SOURCES[k][1], url=SOURCES[k][2], date=data_time if k in ("weather", "air") else "")
-               for k in ("weather", "air", "model", "omf") if k in used]
+               for k in ("weather", "air", "model", "omf", "daily", "history") if k in used]
     news_items = retrieve_news(question, codes, now_vn)
     for i, r in enumerate(news_items, FIRST_NEWS_NUMBER):
         sources.append(dict(n=i, title=f"{r['title']} ({r['source']})", url=r["link"],
                             date=str(r["published"]).replace("T", " ")))
     news = _news_block(news_items, FIRST_NEWS_NUMBER)
-    text = "\n\n".join(["\n".join(head)] + blocks + ([news] if news else []) + [summary])
+    start = FIRST_NEWS_NUMBER + len(news_items)
+    events = retrieve_events(question, codes, periods)
+    ev_lines = []
+    for i, r in enumerate(events, start):
+        sources.append(dict(n=i, title=f"{r['title']} (Wikipedia)", url=r["url"], date=""))
+        ev_lines.append(f"- [{i}] {r['title']}: {r['summary']}")
+    ev_block = ("### Past weather events in Vietnam (Wikipedia, collected by our scraper)\n" + "\n".join(ev_lines)) if ev_lines else ""
+    text = "\n\n".join(["\n".join(head)] + blocks + [b for b in (news, ev_block) if b] + [summary])
     return text, sources
 
 
@@ -329,10 +566,11 @@ STRICT RULES:
 4. Do NOT write any links and do NOT write a "Sources" list. The app adds the source list automatically.
 5. Answer in the same language as the question (Vietnamese or English). In English use simple, clear English (B1 level). Keep it short (about 120 words). Use short bullet points for numbers when helpful. Give practical advice (umbrella, mask, drink water...) only when it follows from the data.
 6. Always say the time of the data. Only call it "now" when it is less than 2 hours old. Only talk about forecasts for times after the current time.
-7. Forecasts: prefer "our model" [3] and say it is the model trained by Group 8; you can compare with Open-Meteo [4].
-8. US AQI levels (EPA): 0-50 good, 51-100 moderate, 101-150 unhealthy for sensitive groups, 151-200 unhealthy, above 200 very unhealthy.
-9. Vietnam has 34 provinces since 1 July 2025. If the user uses an old province name, explain briefly which new province it belongs to.
-10. Politely refuse questions that are not about weather, air quality or this web app."""
+7. Forecasts: for the next 1 to 6 hours prefer "our model" [3] (trained by Group 8) and you can compare with Open-Meteo [4]. For tomorrow and the next days use only Open-Meteo's daily forecast [5] and say it is Open-Meteo's forecast, not our model. There is no AQI forecast: never predict AQI.
+8. The past: use daily history [6] for numbers on past dates (say they come from reanalysis/model data, not a weather station) and Wikipedia articles for past storms, floods and disasters. If [6] says NO DATA for a date and no article covers it, say you do not have this information.
+9. US AQI levels (EPA): 0-50 good, 51-100 moderate, 101-150 unhealthy for sensitive groups, 151-200 unhealthy, above 200 very unhealthy.
+10. Vietnam has 34 provinces since 1 July 2025. If the user uses an old province name, explain briefly which new province it belongs to.
+11. Politely refuse questions that are not about weather, air quality or this web app."""
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +678,26 @@ def _stream_groq(messages):
             yield delta.get("content") or ""
 
 
+_OUT_OF_RANGE = re.compile(
+    r"(?<!\w)(tuần sau|tuần tới|tháng sau|tháng tới|năm sau|năm tới|cuối tuần sau|mùa sau|next week|next month|next year|"
+    r"(?:[4-9]|[1-9]\d+) ngày (?:tới|sau|nữa)|in (?:[4-9]|[1-9]\d+) days|(?:[4-9]|[1-9]\d+) days (?:from now|later))(?!\w)",
+    re.IGNORECASE)
+
+
+def out_of_range_answer(question):
+    """Fixed answer (no AI) for time ranges our data can never cover, so nothing can be invented."""
+    m = _OUT_OF_RANGE.search(question)
+    if not m:
+        return None
+    if _VI_CHARS.search(question):
+        return (f"Mình không có thông tin về **{m.group(0)}** trong dữ liệu hiện tại. Hệ thống chỉ có: dữ liệu quan trắc "
+                "vài ngày gần đây, dự báo của mô hình nhóm cho 1–6 giờ tới, dự báo theo ngày của Open-Meteo cho 3 ngày tới, "
+                "và tin tức trong 7 ngày gần nhất. Bạn có thể hỏi về các khoảng thời gian này.")
+    return (f"I don't have information about **{m.group(0)}** in our current data. We only have: observations from the "
+            "last few days, our model's forecast for the next 1–6 hours, Open-Meteo's daily forecast for the next 3 days, "
+            "and news from the last 7 days. You can ask about these.")
+
+
 _VI_CHARS = re.compile(r"[ăâđêôơưàáạảãằắặẳẵầấậẩẫèéẹẻẽềếệểễìíịỉĩòóọỏõồốộổỗờớợởỡùúụủũừứựửữỳýỵỷỹ]", re.IGNORECASE)
 
 
@@ -465,6 +723,10 @@ def _sources_markdown(answer, sources, question):
 def ask(question: str, history=None, selected_location: str = None):
     """Generator that yields the answer piece by piece (use with st.write_stream).
     history: list of {"role": "user"/"assistant", "content": ...} from earlier turns."""
+    fixed = out_of_range_answer(question)
+    if fixed:
+        yield fixed
+        return
     context, sources = build_context_and_sources(question, selected_location)
     messages = [{"role": "system", "content": SYSTEM_PROMPT + "\n\nDATA:\n" + context}]
     for m in (history or [])[-6:]:  # keep only the last 3 question/answer pairs

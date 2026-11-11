@@ -16,8 +16,8 @@ SUGGESTIONS = [
     "Miền Trung có bão hay mưa lớn không?",
     "Which province has the worst air right now?",
     "Hà Nội 6 giờ tới bao nhiêu độ?",
-    "Is it a good time to go running in Da Nang?",
-    "Có tin cảnh báo thời tiết nào mới không?",
+    "Bão Yagi năm 2024 gây thiệt hại gì?",
+    "Tháng 7/2024 Hà Nội mưa bao nhiêu?",
 ]
 
 _CSS = f"""
@@ -75,8 +75,8 @@ def _hero():
     st.markdown(
         f'<div class="wq-chat-hero"><div class="logo">{icon}</div>'
         "<h1>Ask about weather and air quality in Vietnam</h1>"
-        "<p>Answers use live data for 34 provinces, our own forecast model and news from Vietnamese "
-        "newspapers. Every answer shows its sources. If we do not have the data, the assistant says so. "
+        "<p>Answers use live data for 34 provinces, our own forecast model, news from Vietnamese "
+        "newspapers, 5 years of daily history and past storms and floods from Wikipedia. Every answer shows its sources. If we do not have the data, the assistant says so. "
         "You can ask in English or Vietnamese.</p></div>",
         unsafe_allow_html=True,
     )
