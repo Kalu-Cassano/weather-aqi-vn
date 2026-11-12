@@ -60,9 +60,9 @@ def _status_chips():
     except Exception:
         pass
     try:
-        n = assistant._read("news.csv")
-        if n is not None:
-            chips.append(f'<span class="wq-chip"><b>{len(n)}</b> news articles</span>')
+        n = assistant.news_count()
+        if n:
+            chips.append(f'<span class="wq-chip"><b>{n:,}</b> news articles scraped</span>')
     except Exception:
         pass
     chips.append('<span class="wq-chip"><b>34</b> provinces</span>')

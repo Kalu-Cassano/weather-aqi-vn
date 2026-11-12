@@ -14,6 +14,7 @@ Dùng trong app.py:
     assistant.build_context(question, selected_location)  # để hiển thị "dữ liệu AI đã dùng"
 """
 import json
+import math
 import os
 import re
 import time
@@ -447,7 +448,7 @@ def _province_block(code, w, aq, preds, omf, used, hist=None, periods=None) -> s
 # ---------------------------------------------------------------------------
 # News retrieval (articles collected by news_scraper.py)
 # ---------------------------------------------------------------------------
-NEWS_MAX = 4
+NEWS_MAX = 5
 NEWS_DAYS = 7
 _STOP = set("the a an is are was be to of in on at for and or with how what which when where will can do does "
             "now today right this that there any have has about please tell me us you your "
@@ -466,15 +467,57 @@ def _tokens(text):
     return {t for t in _norm(text).split() if len(t) >= 3 and t not in _STOP}
 
 
-def retrieve_news(question, codes, now_vn):
-    df = _read("news.csv")
-    if df is None or df.empty:
+REGION_OF = {c: "North" for c in "ha_noi lai_chau dien_bien son_la lang_son quang_ninh cao_bang tuyen_quang lao_cai "
+              "thai_nguyen phu_tho bac_ninh hung_yen hai_phong ninh_binh".split()}
+REGION_OF.update({c: "Central" for c in "thanh_hoa nghe_an ha_tinh quang_tri hue da_nang quang_ngai gia_lai khanh_hoa".split()})
+REGION_OF.update({c: "Highlands" for c in "dak_lak lam_dong".split()})
+REGION_OF.update({c: "South" for c in "tp_hcm dong_nai tay_ninh can_tho vinh_long dong_thap ca_mau an_giang".split()})
+ARCHIVE_FILE = config.DATA_DIR / "history" / "news_archive.csv"
+_CORPUS = {"key": None}
+
+
+def _corpus():
+    """All scraped articles (last hours from news.csv + the big archive), prepared once for searching."""
+    files = [RT / "news.csv", ARCHIVE_FILE]
+    key = tuple(f.stat().st_mtime if f.exists() else 0 for f in files)
+    if _CORPUS["key"] == key:
+        return _CORPUS
+    frames = []
+    for f in files:
+        if f.exists():
+            try:
+                frames.append(pd.read_csv(f, dtype=str).fillna(""))
+            except Exception:
+                pass
+    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["link"])
+    if not df.empty:
+        df = df.drop_duplicates("link", keep="first").drop_duplicates("title", keep="first").reset_index(drop=True)
+    docs, df_count = [], {}
+    for r in df.to_dict("records"):
+        title_t, body_t = _tokens(r["title"]), _tokens(r["summary"])
+        d = dict(r, _title=title_t, _all=title_t | body_t,
+                 _prov=set(filter(None, r["provinces"].split(";"))), _reg=set(filter(None, r["regions"].split(";"))),
+                 _top=set(filter(None, r["topics"].split(";"))), _day=str(r["published"])[:10])
+        docs.append(d)
+        for t in d["_all"]:
+            df_count[t] = df_count.get(t, 0) + 1
+    n = max(len(docs), 1)
+    _CORPUS.update(key=key, docs=docs, idf={t: math.log(1 + n / c) for t, c in df_count.items()}, df=df)
+    return _CORPUS
+
+
+def news_count():
+    return len(_corpus()["docs"])
+
+
+def retrieve_news(question, codes, now_vn, periods=None, limit=NEWS_MAX):
+    """Find the articles that fit the question best. Always returns some related articles when the
+    archive has any: first the best matches, then the newest articles about the same province/region."""
+    c = _corpus()
+    docs = c["docs"]
+    if not docs:
         return []
-    df = df.fillna("")
-    cutoff = (now_vn - pd.Timedelta(days=NEWS_DAYS)).strftime("%Y-%m-%dT%H:%M")
-    df = df[df["published"] >= cutoff]
-    if df.empty:
-        return []
+    idf = c["idf"]
     try:
         from news_scraper import classify  # accent-aware topic and region matching
         q_topics, q_regions = map(set, classify(question))
@@ -482,34 +525,54 @@ def retrieve_news(question, codes, now_vn):
         q_topics, q_regions = set(), set()
     qn = _norm(question)
     q_regions |= {r for r, words in _REGION_WORDS.items() if any(f" {w} " in qn for w in words)}
-    q_topics.discard("weather")  # too general to pick articles
+    q_regions |= {REGION_OF.get(code) for code in codes} - {None}
+    q_topics.discard("weather")
     q_tokens = _tokens(question)
+    codes = set(codes)
+    # time window: the dates asked about, or "recent" when no date is asked
+    window = None
+    for kind, value, _ in periods or []:
+        start, end = _period_bounds(kind, value)
+        if kind == "day":
+            start = (pd.Timestamp(start) - pd.Timedelta(days=3)).strftime("%Y-%m-%d")
+            end = (pd.Timestamp(end) + pd.Timedelta(days=3)).strftime("%Y-%m-%d")
+        window = (start, end) if window is None else (min(window[0], start), max(window[1], end))
+    today = now_vn.strftime("%Y-%m-%d")
+
     scored = []
-    for _, r in df.iterrows():
-        provs = set(filter(None, str(r["provinces"]).split(";")))
-        regions = set(filter(None, str(r["regions"]).split(";")))
-        topics = set(filter(None, str(r["topics"]).split(";")))
-        score = 3 * len(provs & set(codes)) + 2 * len(regions & q_regions) + 2 * len(topics & q_topics)
-        score += len(q_tokens & _tokens(f"{r['title']} {r['summary']}"))
-        if score < 2:
+    for d in docs:
+        text_score = sum(idf.get(t, 0) for t in q_tokens & d["_all"]) + sum(idf.get(t, 0) for t in q_tokens & d["_title"])
+        score = text_score + 3 * len(d["_prov"] & codes) + 1.5 * len(d["_reg"] & q_regions) + 2 * len(d["_top"] & q_topics)
+        if score <= 0:
             continue
-        try:
-            age_h = (now_vn - pd.to_datetime(r["published"])).total_seconds() / 3600
-        except Exception:
-            age_h = 999
-        score += 2 if age_h <= 24 else (1 if age_h <= 72 else 0)
-        scored.append((score, r["published"], r))
-    if not scored and _NEWSY.search(question):
-        # a general news question ("có tin cảnh báo gì không?"): give the newest articles
-        return [r for _, r in df.sort_values("published", ascending=False).head(3).iterrows()]
+        if window:
+            if window[0] <= d["_day"] <= window[1]:
+                score += 6
+            elif not text_score:
+                continue
+        else:  # newer is better for questions about now
+            try:
+                age = (pd.Timestamp(today) - pd.Timestamp(d["_day"])).days
+            except Exception:
+                age = 9999
+            score += 5 if age <= 2 else 4 if age <= 7 else 3 if age <= 30 else 1 if age <= 365 else 0
+        scored.append((score, d["_day"], d))
     scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
-    return [r for _, _, r in scored[:NEWS_MAX]]
+    picked = [d for _, _, d in scored[:limit]]
+    if len(picked) < 3:  # always show some related articles: same province/region, newest first
+        seen = {d["link"] for d in picked}
+        extra = [d for d in docs if d["link"] not in seen and (d["_prov"] & codes or d["_reg"] & q_regions)]
+        if not extra:
+            extra = [d for d in docs if d["link"] not in seen]
+        extra.sort(key=lambda d: d["_day"], reverse=True)
+        picked += extra[:3 - len(picked)]
+    return picked
 
 
 def _news_block(items, start):
     if not items:
         return ""
-    lines = ["### News articles collected by our web scraper"]
+    lines = ["### News articles collected by our web scraper (look at the publish date: an old article is NOT about today)"]
     for i, r in enumerate(items, start):
         lines.append(f"- [{i}] {r['title']} ({r['source']}, published {str(r['published']).replace('T', ' ')}). "
                      f"Summary: {r['summary']}")
@@ -573,10 +636,10 @@ def build_context_and_sources(question: str, selected_location: str = None):
 
     sources = [dict(n=SOURCES[k][0], title=SOURCES[k][1], url=SOURCES[k][2], date=data_time if k in ("weather", "air") else "")
                for k in ("weather", "air", "model", "omf", "daily", "history") if k in used]
-    news_items = retrieve_news(question, codes, now_vn)
+    news_items = retrieve_news(question, codes, now_vn, periods)
     for i, r in enumerate(news_items, FIRST_NEWS_NUMBER):
         sources.append(dict(n=i, title=f"{r['title']} ({r['source']})", url=r["link"],
-                            date=str(r["published"]).replace("T", " ")))
+                            date=str(r["published"]).replace("T", " ")[:16], news=True))
     news = _news_block(news_items, FIRST_NEWS_NUMBER)
     start = FIRST_NEWS_NUMBER + len(news_items)
     events = retrieve_events(question, codes, periods)
@@ -748,17 +811,23 @@ def _sources_markdown(answer, sources, question):
         return ("\n\n---\n*Không có nguồn dữ liệu nào cho câu hỏi này.*" if vi
                 else "\n\n---\n*No data source was available for this question.*")
     cited = {int(n) for n in re.findall(r"\[(\d{1,2})\]", answer)}
-    chosen = [x for x in sources if x["n"] in cited]
-    if chosen:
-        title = "**Nguồn:**" if vi else "**Sources:**"
-    else:  # nothing cited (e.g. "I don't know"): show what was checked
-        chosen = [x for x in sources if x["n"] < FIRST_NEWS_NUMBER]
-        title = "**Nguồn dữ liệu đã kiểm tra:**" if vi else "**Data sources checked:**"
-    lines = []
-    for x in chosen:
+
+    def line(x):
         date = f" · {x['date']}" if x.get("date") else ""
-        lines.append(f"- [{x['n']}] [{x['title']}]({x['url']}){date}")
-    return "\n\n---\n" + title + "\n" + "\n".join(lines)
+        return f"- [{x['n']}] [{x['title']}]({x['url']}){date}"
+
+    chosen = [x for x in sources if x["n"] in cited]
+    out = "\n\n---\n"
+    if chosen:
+        out += ("**Nguồn:**" if vi else "**Sources:**") + "\n" + "\n".join(map(line, chosen))
+    else:  # nothing cited (e.g. "I don't know"): show what was checked
+        checked = [x for x in sources if x["n"] < FIRST_NEWS_NUMBER]
+        if checked:
+            out += ("**Nguồn dữ liệu đã kiểm tra:**" if vi else "**Data sources checked:**") + "\n" + "\n".join(map(line, checked))
+    related = [x for x in sources if x["n"] >= FIRST_NEWS_NUMBER and x["n"] not in cited]
+    if related:
+        out += ("\n\n**Bài báo liên quan:**" if vi else "\n\n**Related articles:**") + "\n" + "\n".join(map(line, related))
+    return out
 
 
 def ask(question: str, history=None, selected_location: str = None):

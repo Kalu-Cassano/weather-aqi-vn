@@ -37,7 +37,9 @@ FILES = {
     "processed/summary_by_province.csv": config.DATA_DIR / "processed" / "summary_by_province.csv",
     "processed/daily_history.csv": config.DATA_DIR / "processed" / "daily_history.csv",
     "processed/events.csv": config.DATA_DIR / "history" / "events.csv",
+    "processed/news_archive.csv": config.DATA_DIR / "history" / "news_archive.csv",
 }
+BIG_FILE_AGE = 3 * 3600  # big files that change rarely: download again at most every 3 hours
 
 
 def is_cloud() -> bool:
@@ -58,14 +60,14 @@ def sync(max_age: int = MAX_AGE_SECONDS) -> None:
     if not is_cloud():
         return
     for rel, dst in FILES.items():
-        if _fresh(dst, max_age):
+        if _fresh(dst, BIG_FILE_AGE if rel.startswith("processed/") else max_age):
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         tmp = dst.with_suffix(dst.suffix + ".tmp")
         try:
             url = f"{RAW_BASE}/{rel}?t={int(time.time() // 60)}"
             req = urllib.request.Request(url, headers={"User-Agent": "weather-aqi-vn"})
-            with urllib.request.urlopen(req, timeout=20) as r, open(tmp, "wb") as f:
+            with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
                 f.write(r.read())
             tmp.replace(dst)
         except Exception:
